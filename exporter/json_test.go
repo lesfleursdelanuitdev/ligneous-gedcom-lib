@@ -129,6 +129,66 @@ func TestToJSONString(t *testing.T) {
 	}
 }
 
+func TestToJSON_NestedNotes(t *testing.T) {
+	input := `0 HEAD
+1 GEDC
+2 VERS 5.5
+0 @N1@ NOTE Top-level note one
+0 @N2@ NOTE Top-level note two
+0 @N3@ NOTE Top-level note three
+0 @N4@ NOTE Note on marriage event
+0 @I1@ INDI
+1 NAME John /Doe/
+1 NOTE @N1@
+1 RESI
+2 ADDR 123 Main St
+3 NOTE @N2@
+0 @I2@ INDI
+1 NAME Jane /Doe/
+1 NAME Jane /Smith/
+2 NOTE @N3@
+0 @F1@ FAM
+1 HUSB @I1@
+1 WIFE @I2@
+1 MARR
+2 DATE 15 JUN 1975
+2 NOTE @N4@
+0 TRLR
+`
+	doc, _, err := parser.Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	result := ToJSON(doc)
+
+	if len(result.Notes) != 4 {
+		t.Fatalf("expected 4 top-level notes, got %d", len(result.Notes))
+	}
+
+	// I1 should have @N1@ (direct) but NOT @N2@ (under RESI which is an event tag)
+	i1 := result.Individuals[0]
+	if len(i1.Notes) != 1 {
+		t.Errorf("I1: expected 1 note (only direct, RESI is event), got %d: %+v", len(i1.Notes), i1.Notes)
+	} else if i1.Notes[0].Xref != "@N1@" {
+		t.Errorf("I1: expected note @N1@, got %q", i1.Notes[0].Xref)
+	}
+
+	// I2 should have @N3@ (nested under NAME, which is not an event tag)
+	i2 := result.Individuals[1]
+	if len(i2.Notes) != 1 {
+		t.Errorf("I2: expected 1 note (nested under NAME), got %d: %+v", len(i2.Notes), i2.Notes)
+	} else if i2.Notes[0].Xref != "@N3@" {
+		t.Errorf("I2: expected note @N3@, got %q", i2.Notes[0].Xref)
+	}
+
+	// F1 should have NO notes (MARR is an event tag, so @N4@ belongs to event, not family)
+	f1 := result.Families[0]
+	if len(f1.Notes) != 0 {
+		t.Errorf("F1: expected 0 notes (MARR note belongs to event), got %d: %+v", len(f1.Notes), f1.Notes)
+	}
+}
+
 func TestToJSON_RealFiles(t *testing.T) {
 	files, err := filepath.Glob("../testdata/*.ged")
 	if err != nil {

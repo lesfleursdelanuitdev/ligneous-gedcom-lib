@@ -459,6 +459,90 @@ func TestEnrichFull(t *testing.T) {
 	}
 }
 
+// --- Nested note extraction test ---
+
+func TestEnrichNestedNotes(t *testing.T) {
+	input := `0 HEAD
+1 GEDC
+2 VERS 5.5
+0 @N1@ NOTE Top-level note one.
+0 @N2@ NOTE Top-level note two.
+0 @I1@ INDI
+1 NAME John /Doe/
+2 NOTE @N1@
+1 RESI
+2 ADDR 123 Main St
+3 NOTE Address remark.
+1 NOTE @N2@
+0 @F1@ FAM
+1 HUSB @I1@
+1 MARR
+2 PLAC Boston
+2 NOTE @N1@
+0 @S1@ SOUR
+1 TITL Census
+1 DATA
+2 NOTE Source data note.
+0 TRLR
+`
+	doc, _, err := parser.Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	ed := Enrich(doc)
+
+	// @I1@ links to: @N1@ (nested under NAME) and @N2@ (direct).
+	// The inline "Address remark." under RESI > ADDR is NOT here because
+	// RESI is an event tag (skipped by Phase 2, handled by Phase 4).
+	if len(ed.IndividualNotes) != 2 {
+		t.Errorf("expected 2 individual-note links, got %d", len(ed.IndividualNotes))
+		for i, link := range ed.IndividualNotes {
+			t.Logf("  [%d] xref=%s noteIdx=%d content=%q",
+				i, link.IndividualXref, link.NoteIndex, ed.Notes[link.NoteIndex].Content)
+		}
+	}
+
+	// Family-level scan skips event tags, so FamilyNotes should be 0.
+	if len(ed.FamilyNotes) != 0 {
+		t.Errorf("expected 0 family-note links (event notes go to EventNotes), got %d", len(ed.FamilyNotes))
+	}
+
+	// Event notes: MARR has NOTE @N1@, RESI has nested "Address remark."
+	if len(ed.EventNotes) != 2 {
+		t.Errorf("expected 2 event-note links, got %d", len(ed.EventNotes))
+	}
+
+	// Source @S1@ has an inline note nested under DATA.
+	if len(ed.SourceNotes) != 1 {
+		t.Errorf("expected 1 source-note link, got %d", len(ed.SourceNotes))
+	}
+}
+
+func TestEnrichNestedNoteDedup(t *testing.T) {
+	input := `0 HEAD
+1 GEDC
+2 VERS 5.5
+0 @N1@ NOTE Shared note.
+0 @I1@ INDI
+1 NAME Jane /Doe/
+2 NOTE @N1@
+1 NOTE @N1@
+0 TRLR
+`
+	doc, _, err := parser.Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	ed := Enrich(doc)
+
+	// Same note referenced twice on the same individual should be deduped.
+	if len(ed.IndividualNotes) != 1 {
+		t.Errorf("expected 1 individual-note link (deduped), got %d", len(ed.IndividualNotes))
+	}
+}
+
 // --- UUID generation test ---
 
 func TestGenerateIDs(t *testing.T) {

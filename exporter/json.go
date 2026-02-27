@@ -131,12 +131,8 @@ func convertIndividual(rec gedcom.GedcomRecord, idx map[string]*gedcom.GedcomRec
 		}
 	}
 
-	// Extract NOTE references
-	for _, note := range rec.ChildrenByTag("NOTE") {
-		if note.Value != "" {
-			indi.Notes = append(indi.Notes, DenormalizedNoteRef{Xref: note.Value})
-		}
-	}
+	// Recursively extract NOTE references, skipping event sub-trees
+	indi.Notes = collectNoteRefs(rec, individualEventTags)
 
 	// Extract SOUR references
 	for _, sour := range rec.ChildrenByTag("SOUR") {
@@ -198,12 +194,8 @@ func convertFamily(rec gedcom.GedcomRecord, idx map[string]*gedcom.GedcomRecord)
 		}
 	}
 
-	// Extract NOTE references
-	for _, note := range rec.ChildrenByTag("NOTE") {
-		if note.Value != "" {
-			fam.Notes = append(fam.Notes, DenormalizedNoteRef{Xref: note.Value})
-		}
-	}
+	// Recursively extract NOTE references, skipping event sub-trees
+	fam.Notes = collectNoteRefs(rec, familyEventTags)
 
 	// Extract SOUR references
 	for _, sour := range rec.ChildrenByTag("SOUR") {
@@ -288,6 +280,65 @@ func parseYear(dateStr string) int {
 		}
 	}
 	return 0
+}
+
+// Event tag sets mirror the enricher's definitions so that note extraction
+// for individuals/families correctly skips event sub-trees (handled separately).
+var individualEventTags = map[string]bool{
+	"BIRT": true, "CHR": true, "DEAT": true, "BURI": true, "CREM": true,
+	"ADOP": true, "BAPM": true, "BARM": true, "BASM": true, "BLES": true,
+	"CHRA": true, "CONF": true, "FCOM": true, "ORDN": true, "NATU": true,
+	"EMIG": true, "IMMI": true, "CENS": true, "PROB": true, "WILL": true,
+	"GRAD": true, "RETI": true, "EVEN": true, "RESI": true,
+}
+
+var familyEventTags = map[string]bool{
+	"MARR": true, "ANUL": true, "DIV": true, "DIVF": true, "ENGA": true,
+	"MARB": true, "MARC": true, "MARL": true, "MARS": true, "EVEN": true,
+}
+
+// collectNoteRefs recursively finds all NOTE references in a record's subtree.
+// skipTags prevents recursion into certain child tags (e.g. event tags that
+// should be attributed to the event, not the parent record). Returns a
+// deduplicated slice of note references.
+func collectNoteRefs(rec gedcom.GedcomRecord, skipTags map[string]bool) []DenormalizedNoteRef {
+	seen := make(map[string]bool)
+	var refs []DenormalizedNoteRef
+	collectNoteRefsRecursive(rec, skipTags, seen, &refs)
+	return refs
+}
+
+func collectNoteRefsRecursive(rec gedcom.GedcomRecord, skipTags map[string]bool, seen map[string]bool, refs *[]DenormalizedNoteRef) {
+	for _, child := range rec.Children {
+		if child.Tag == "NOTE" && child.Value != "" && !seen[child.Value] {
+			seen[child.Value] = true
+			*refs = append(*refs, DenormalizedNoteRef{Xref: child.Value})
+		}
+		if child.Tag != "NOTE" && (skipTags == nil || !skipTags[child.Tag]) {
+			collectNoteRefsRecursive(child, skipTags, seen, refs)
+		}
+	}
+}
+
+// collectNoteXrefs recursively finds all NOTE xref strings in a record's subtree.
+// Same logic as collectNoteRefs but returns raw strings for CSV use.
+func collectNoteXrefs(rec gedcom.GedcomRecord, skipTags map[string]bool) []string {
+	seen := make(map[string]bool)
+	var xrefs []string
+	collectNoteXrefsRecursive(rec, skipTags, seen, &xrefs)
+	return xrefs
+}
+
+func collectNoteXrefsRecursive(rec gedcom.GedcomRecord, skipTags map[string]bool, seen map[string]bool, xrefs *[]string) {
+	for _, child := range rec.Children {
+		if child.Tag == "NOTE" && child.Value != "" && !seen[child.Value] {
+			seen[child.Value] = true
+			*xrefs = append(*xrefs, child.Value)
+		}
+		if child.Tag != "NOTE" && (skipTags == nil || !skipTags[child.Tag]) {
+			collectNoteXrefsRecursive(child, skipTags, seen, xrefs)
+		}
+	}
 }
 
 // ToJSONString is a convenience function that returns JSON as a formatted string.

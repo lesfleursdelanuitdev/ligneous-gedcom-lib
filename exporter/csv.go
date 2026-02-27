@@ -111,13 +111,7 @@ func individualToCSVRow(indi gedcom.GedcomRecord, doc *gedcom.GedcomDocument, id
 		}
 	}
 
-	// Collect note references
-	var notes []string
-	for _, noteRef := range indi.ChildrenByTag("NOTE") {
-		if noteRef.Value != "" {
-			notes = append(notes, noteRef.Value)
-		}
-	}
+	notes := collectNoteXrefs(indi, nil)
 
 	return []string{
 		indi.Xref,

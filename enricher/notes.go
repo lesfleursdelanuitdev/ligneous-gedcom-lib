@@ -30,7 +30,8 @@ func (e *enricherState) extractNotes(ed *EnrichedDocument) {
 		}
 	}
 
-	// Phase 2: Inline notes on individuals
+	// Phase 2: Notes on individuals (skip event-tag children; those are
+	// handled by Phase 4).
 	for _, indi := range e.doc.Individuals {
 		if indi.Xref == "" {
 			continue
@@ -40,10 +41,10 @@ func (e *enricherState) extractNotes(ed *EnrichedDocument) {
 				IndividualXref: indi.Xref,
 				NoteIndex:      noteIdx,
 			})
-		})
+		}, individualEventTags)
 	}
 
-	// Phase 3: Inline notes on families
+	// Phase 3: Notes on families (skip event-tag children).
 	for _, fam := range e.doc.Families {
 		if fam.Xref == "" {
 			continue
@@ -53,10 +54,10 @@ func (e *enricherState) extractNotes(ed *EnrichedDocument) {
 				FamilyXref: fam.Xref,
 				NoteIndex:  noteIdx,
 			})
-		})
+		}, familyEventTags)
 	}
 
-	// Phase 4: Notes on events (processed after events are extracted)
+	// Phase 4: Notes on events (recurse fully).
 	for evtIdx, evt := range ed.Events {
 		rec := e.findEventRecord(evt)
 		if rec == nil {
@@ -67,10 +68,10 @@ func (e *enricherState) extractNotes(ed *EnrichedDocument) {
 				EventIndex: evtIdx,
 				NoteIndex:  noteIdx,
 			})
-		})
+		}, nil)
 	}
 
-	// Phase 5: Notes on sources
+	// Phase 5: Notes on sources (recurse fully).
 	for srcIdx, src := range ed.Sources {
 		srcRec := e.doc.FindByXref(src.Xref)
 		if srcRec == nil {
@@ -81,17 +82,30 @@ func (e *enricherState) extractNotes(ed *EnrichedDocument) {
 				SourceIndex: srcIdx,
 				NoteIndex:   noteIdx,
 			})
-		})
+		}, nil)
 	}
 }
 
-// extractRecordNotes finds all NOTE sub-tags on a record and calls linkFn with
-// the note index for each.
-func (e *enricherState) extractRecordNotes(ed *EnrichedDocument, rec gedcom.GedcomRecord, linkFn func(noteIdx int)) {
+// extractRecordNotes finds all NOTE tags anywhere in a record's sub-tree and
+// calls linkFn with the note index for each unique note found. skipTags
+// specifies child tags to NOT recurse into (e.g. event tags that are handled
+// by a separate phase). Pass nil to recurse into everything.
+func (e *enricherState) extractRecordNotes(ed *EnrichedDocument, rec gedcom.GedcomRecord, linkFn func(noteIdx int), skipTags map[string]bool) {
+	seen := make(map[int]bool)
+	e.extractRecordNotesRecursive(ed, rec, linkFn, seen, skipTags)
+}
+
+func (e *enricherState) extractRecordNotesRecursive(ed *EnrichedDocument, rec gedcom.GedcomRecord, linkFn func(noteIdx int), seen map[int]bool, skipTags map[string]bool) {
 	for _, noteChild := range rec.ChildrenByTag("NOTE") {
 		noteIdx := e.resolveOrCreateNote(ed, noteChild)
-		if noteIdx >= 0 {
+		if noteIdx >= 0 && !seen[noteIdx] {
+			seen[noteIdx] = true
 			linkFn(noteIdx)
+		}
+	}
+	for _, child := range rec.Children {
+		if child.Tag != "NOTE" && !skipTags[child.Tag] {
+			e.extractRecordNotesRecursive(ed, child, linkFn, seen, skipTags)
 		}
 	}
 }

@@ -12,6 +12,7 @@ var individualEventTags = map[string]bool{
 	"CHRA": true, "CONF": true, "FCOM": true, "ORDN": true, "NATU": true,
 	"EMIG": true, "IMMI": true, "CENS": true, "PROB": true, "WILL": true,
 	"GRAD": true, "RETI": true, "EVEN": true, "RESI": true,
+	"OCCU": true, "NATI": true, "RELI": true,
 }
 
 var familyEventTags = map[string]bool{
@@ -213,6 +214,29 @@ func (e *enricherState) extractIndividualData(ed *EnrichedDocument) {
 			DeathPlaceIndex: -1,
 		}
 
+		// Extract attribute values (OCCU, NATI, RELI) - both as events and as scalars
+		for _, child := range indi.Children {
+			val := strings.TrimSpace(child.Value)
+			switch child.Tag {
+			case "OCCU":
+				if val != "" {
+					ei.OccupationValues = append(ei.OccupationValues, val)
+				}
+			case "NATI":
+				if val != "" {
+					ei.NationalityValues = append(ei.NationalityValues, val)
+				}
+			case "RELI":
+				if val != "" && ei.Religion == "" {
+					ei.Religion = val
+				}
+			case "_GENDER":
+				if val != "" {
+					ei.Gender = val
+				}
+			}
+		}
+
 		// Extract events and capture birth/death FK indexes
 		sortOrder := 0
 		for _, child := range indi.Children {
@@ -250,35 +274,57 @@ func (e *enricherState) extractIndividualNames(ed *EnrichedDocument, indi gedcom
 		return
 	}
 
-	nameRec := nameRecs[0]
-	fullName := nameRec.Value
+	for formIdx, nameRec := range nameRecs {
+		fullName := nameRec.Value
 
-	surname := nameRec.ChildValue("SURN")
-	if surname == "" {
-		surname = extractSurnameFromFullName(fullName)
-	}
-	if surnIdx := e.getOrCreateSurname(surname, true); surnIdx >= 0 {
-		ed.IndividualSurnames = append(ed.IndividualSurnames, IndividualSurnameLink{
+		nameType := nameRec.ChildValue("TYPE")
+		if nameType == "" {
+			nameType = "birth"
+		}
+		nameType = strings.TrimSpace(strings.ToLower(nameType))
+		if nameType == "" {
+			nameType = "birth"
+		}
+
+		nf := NameForm{
 			IndividualXref: indi.Xref,
-			SurnameIndex:   surnIdx,
-			NameType:       "birth",
-			IsPrimary:      true,
-		})
-	}
+			NameType:       nameType,
+			IsPrimary:      formIdx == 0,
+			SortOrder:      formIdx,
+		}
+		ed.NameForms = append(ed.NameForms, nf)
+		nfIdx := len(ed.NameForms) - 1
 
-	givenName := nameRec.ChildValue("GIVN")
-	if givenName == "" {
-		givenName = extractGivenFromFullName(fullName)
-	}
-	givenParts := strings.Fields(givenName)
-	for i, part := range givenParts {
-		if givenIdx := e.getOrCreateGivenName(part, true); givenIdx >= 0 {
-			ed.IndividualGivenNames = append(ed.IndividualGivenNames, IndividualGivenNameLink{
-				IndividualXref: indi.Xref,
-				GivenNameIndex: givenIdx,
-				Position:       i + 1,
-				IsPrimary:      i == 0,
-			})
+		surname := nameRec.ChildValue("SURN")
+		if surname == "" {
+			surname = extractSurnameFromFullName(fullName)
+		}
+		if surname != "" {
+			if surnIdx := e.getOrCreateSurname(surname, true); surnIdx >= 0 {
+				ed.NameFormSurnames = append(ed.NameFormSurnames, NameFormSurnameLink{
+					NameFormIndex: nfIdx,
+					SurnameIndex:  surnIdx,
+					Position:      1,
+				})
+			}
+		}
+
+		givenName := nameRec.ChildValue("GIVN")
+		if givenName == "" {
+			givenName = extractGivenFromFullName(fullName)
+		}
+		givenParts := strings.Fields(givenName)
+		for i, part := range givenParts {
+			if part == "" {
+				continue
+			}
+			if givenIdx := e.getOrCreateGivenName(part, true); givenIdx >= 0 {
+				ed.NameFormGivenNames = append(ed.NameFormGivenNames, NameFormGivenNameLink{
+					NameFormIndex:  nfIdx,
+					GivenNameIndex: givenIdx,
+					Position:       i + 1,
+				})
+			}
 		}
 	}
 }

@@ -52,11 +52,14 @@ func GenerateIDs(ed *EnrichedDocument) {
 	}
 
 	// Junction links — names
-	for i := range ed.IndividualSurnames {
-		ed.IndividualSurnames[i].ID = uuid.New().String()
+	for i := range ed.NameForms {
+		ed.NameForms[i].ID = uuid.New().String()
 	}
-	for i := range ed.IndividualGivenNames {
-		ed.IndividualGivenNames[i].ID = uuid.New().String()
+	for i := range ed.NameFormGivenNames {
+		ed.NameFormGivenNames[i].ID = uuid.New().String()
+	}
+	for i := range ed.NameFormSurnames {
+		ed.NameFormSurnames[i].ID = uuid.New().String()
 	}
 	for i := range ed.FamilySurnames {
 		ed.FamilySurnames[i].ID = uuid.New().String()

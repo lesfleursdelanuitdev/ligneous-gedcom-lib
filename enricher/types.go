@@ -41,8 +41,9 @@ type EnrichedDocument struct {
 	FamilyChildren []FamilyChildEdge
 
 	// Junction/link tables — names
-	IndividualSurnames   []IndividualSurnameLink
-	IndividualGivenNames []IndividualGivenNameLink
+	NameForms            []NameForm
+	NameFormGivenNames   []NameFormGivenNameLink
+	NameFormSurnames     []NameFormSurnameLink
 	FamilySurnames       []FamilySurnameLink
 
 	// Junction/link tables — events
@@ -77,15 +78,19 @@ type EnrichedDocument struct {
 
 // EnrichedIndividual mirrors gedcom_individuals_v2 with denormalized FK indexes.
 type EnrichedIndividual struct {
-	ID              string `json:"id,omitempty"`
-	Xref            string `json:"xref"`
-	FullName        string `json:"full_name"`
-	FullNameLower   string `json:"full_name_lower"`
-	Sex             string `json:"sex,omitempty"`
-	BirthDateIndex  int    `json:"birth_date_index"`
-	BirthPlaceIndex int    `json:"birth_place_index"`
-	DeathDateIndex  int    `json:"death_date_index"`
-	DeathPlaceIndex int    `json:"death_place_index"`
+	ID               string   `json:"id,omitempty"`
+	Xref             string   `json:"xref"`
+	FullName         string   `json:"full_name"`
+	FullNameLower    string   `json:"full_name_lower"`
+	Sex              string   `json:"sex,omitempty"`
+	BirthDateIndex   int      `json:"birth_date_index"`
+	BirthPlaceIndex  int      `json:"birth_place_index"`
+	DeathDateIndex   int      `json:"death_date_index"`
+	DeathPlaceIndex  int      `json:"death_place_index"`
+	OccupationValues  []string `json:"occupation_values,omitempty"`
+	NationalityValues []string `json:"nationality_values,omitempty"`
+	Religion          string   `json:"religion,omitempty"`
+	Gender            string   `json:"gender,omitempty"`
 }
 
 // EnrichedFamily mirrors gedcom_families_v2 with denormalized FK indexes.
@@ -262,22 +267,29 @@ type FamilyChildEdge struct {
 // Junction/link types — names
 // ---------------------------------------------------------------------------
 
-// IndividualSurnameLink mirrors gedcom_individual_surnames_v2.
-type IndividualSurnameLink struct {
+// NameForm groups given names and surnames by type (birth, maiden, married, etc.).
+type NameForm struct {
 	ID             string `json:"id,omitempty"`
 	IndividualXref string `json:"individual_xref"`
-	SurnameIndex   int    `json:"surname_index"`
 	NameType       string `json:"name_type"`
 	IsPrimary      bool   `json:"is_primary"`
+	SortOrder      int    `json:"sort_order"`
 }
 
-// IndividualGivenNameLink mirrors gedcom_individual_given_names_v2.
-type IndividualGivenNameLink struct {
+// NameFormGivenNameLink links a name form to a given name.
+type NameFormGivenNameLink struct {
 	ID             string `json:"id,omitempty"`
-	IndividualXref string `json:"individual_xref"`
+	NameFormIndex  int    `json:"name_form_index"`
 	GivenNameIndex int    `json:"given_name_index"`
 	Position       int    `json:"position"`
-	IsPrimary      bool   `json:"is_primary"`
+}
+
+// NameFormSurnameLink links a name form to a surname.
+type NameFormSurnameLink struct {
+	ID            string `json:"id,omitempty"`
+	NameFormIndex int    `json:"name_form_index"`
+	SurnameIndex  int    `json:"surname_index"`
+	Position      int    `json:"position"`
 }
 
 // FamilySurnameLink mirrors gedcom_family_surnames_v2.
