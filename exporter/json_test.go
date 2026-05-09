@@ -189,6 +189,78 @@ func TestToJSON_NestedNotes(t *testing.T) {
 	}
 }
 
+func TestToJSON_MediaInlineNoteDescription(t *testing.T) {
+	input := `0 HEAD
+1 GEDC
+2 VERS 5.5
+0 @M1@ OBJE
+1 FILE photo.jpg
+2 FORM JPEG
+1 TITL Family Photo
+1 NOTE Caption line one
+2 CONT Caption line two
+0 @I1@ INDI
+1 NAME John /Doe/
+1 SEX M
+0 TRLR
+`
+	doc, _, err := parser.Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	result := ToJSON(doc)
+	if len(result.Media) != 1 {
+		t.Fatalf("expected 1 media entry, got %d", len(result.Media))
+	}
+	m := result.Media[0]
+	if m.Xref != "@M1@" {
+		t.Errorf("expected xref @M1@, got %q", m.Xref)
+	}
+	want := "Caption line one\nCaption line two"
+	if m.Description != want {
+		t.Errorf("description: want %q, got %q", want, m.Description)
+	}
+}
+
+func TestToJSON_Associations(t *testing.T) {
+	input := `0 HEAD
+1 GEDC
+2 VERS 5.5
+0 @I1@ INDI
+1 NAME John /Doe/
+1 ASSO @I2@
+2 RELA Neighbor
+0 @I2@ INDI
+1 NAME Jane /Smith/
+0 @F1@ FAM
+1 HUSB @I1@
+1 ASSO @I2@
+2 RELA Witness
+0 TRLR
+`
+	doc, _, err := parser.Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	result := ToJSON(doc)
+
+	if len(result.Individuals) != 2 {
+		t.Fatalf("expected 2 individuals, got %d", len(result.Individuals))
+	}
+	if len(result.Individuals[0].Associates) != 1 {
+		t.Fatalf("expected 1 individual associate, got %d", len(result.Individuals[0].Associates))
+	}
+	if result.Individuals[0].Associates[0].Xref != "@I2@" || result.Individuals[0].Associates[0].Relationship != "Neighbor" {
+		t.Fatalf("unexpected individual associate: %+v", result.Individuals[0].Associates[0])
+	}
+	if len(result.Families) != 1 || len(result.Families[0].Associates) != 1 {
+		t.Fatalf("expected family associate, got families=%d associates=%d", len(result.Families), len(result.Families[0].Associates))
+	}
+	if result.Families[0].Associates[0].Relationship != "Witness" {
+		t.Fatalf("unexpected family associate relation: %+v", result.Families[0].Associates[0])
+	}
+}
+
 func TestToJSON_RealFiles(t *testing.T) {
 	files, err := filepath.Glob("../testdata/*.ged")
 	if err != nil {

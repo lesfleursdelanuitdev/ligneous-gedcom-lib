@@ -9,10 +9,12 @@ import (
 )
 
 // CSVHeader is the column header for CSV export.
+// Rows with Type=INDI are individuals; Type=OBJE are multimedia records (file + inline note as description).
 var CSVHeader = []string{
 	"XREF", "Type", "Name", "Sex", "Birth Date", "Birth Place",
 	"Death Date", "Death Place", "Father XREF", "Mother XREF",
 	"Spouse XREFs", "Children XREFs", "Notes",
+	"Media_File", "Media_Form", "Media_Title", "Media_Description",
 }
 
 // ToCSV writes individuals from a GedcomDocument to a CSV writer.
@@ -28,6 +30,13 @@ func ToCSV(w io.Writer, doc *gedcom.GedcomDocument) error {
 
 	for _, indi := range doc.Individuals {
 		row := individualToCSVRow(indi, doc, idx)
+		if err := cw.Write(row); err != nil {
+			return err
+		}
+	}
+
+	for _, obje := range doc.Media {
+		row := mediaObjeToCSVRow(obje)
 		if err := cw.Write(row); err != nil {
 			return err
 		}
@@ -127,5 +136,30 @@ func individualToCSVRow(indi gedcom.GedcomRecord, doc *gedcom.GedcomDocument, id
 		strings.Join(spouseXrefs, ";"),
 		strings.Join(childrenXrefs, ";"),
 		strings.Join(notes, " | "),
+		"", "", "", "",
+	}
+}
+
+func mediaObjeToCSVRow(obje gedcom.GedcomRecord) []string {
+	var file, form, title string
+	if fr := obje.FirstChildByTag("FILE"); fr != nil {
+		file = fr.Value
+		form = fr.ChildValue("FORM")
+	}
+	title = obje.ChildValue("TITL")
+	name := title
+	if name == "" {
+		name = file
+	}
+	desc := collectOBJEInlineNoteText(obje)
+	return []string{
+		obje.Xref,
+		"OBJE",
+		name,
+		"", "", "", "", "", "", "", "", "", "",
+		file,
+		form,
+		title,
+		desc,
 	}
 }

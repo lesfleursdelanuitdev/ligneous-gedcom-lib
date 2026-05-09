@@ -161,6 +161,57 @@ func TestValidateBrokenXRef(t *testing.T) {
 	}
 }
 
+func TestValidateAssociations(t *testing.T) {
+	doc := &gedcom.GedcomDocument{
+		Header:  gedcom.NewRecord(0, "HEAD"),
+		Trailer: gedcom.NewRecord(0, "TRLR"),
+		Individuals: []gedcom.GedcomRecord{
+			{
+				Level: 0, Tag: "INDI", Xref: "@I1@",
+				Children: []gedcom.GedcomRecord{
+					{Level: 1, Tag: "NAME", Value: "John /Doe/"},
+					{
+						Level: 1, Tag: "ASSO", Value: "@I2@",
+						Children: []gedcom.GedcomRecord{
+							{Level: 2, Tag: "RELA", Value: "Witness"},
+						},
+					},
+				},
+			},
+			{
+				Level: 0, Tag: "INDI", Xref: "@I2@",
+				Children: []gedcom.GedcomRecord{
+					{Level: 1, Tag: "NAME", Value: "Jane /Doe/"},
+				},
+			},
+			{
+				Level: 0, Tag: "INDI", Xref: "@I3@",
+				Children: []gedcom.GedcomRecord{
+					{Level: 1, Tag: "NAME", Value: "Bad /Assoc/"},
+					{Level: 1, Tag: "ASSO", Value: "@I999@"},
+				},
+			},
+		},
+	}
+
+	errs := Validate(doc)
+	var hasBrokenAssociate, hasMissingRela bool
+	for _, e := range errs {
+		if e.Code == "BROKEN_ASSOCIATE_XREF" {
+			hasBrokenAssociate = true
+		}
+		if e.Code == "MISSING_ASSOCIATE_RELA" {
+			hasMissingRela = true
+		}
+	}
+	if !hasBrokenAssociate {
+		t.Error("expected BROKEN_ASSOCIATE_XREF")
+	}
+	if !hasMissingRela {
+		t.Error("expected MISSING_ASSOCIATE_RELA")
+	}
+}
+
 func TestValidateDateConsistency(t *testing.T) {
 	doc := &gedcom.GedcomDocument{
 		Header:  gedcom.NewRecord(0, "HEAD"),

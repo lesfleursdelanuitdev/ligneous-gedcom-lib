@@ -167,3 +167,87 @@ func hashDateFields(pd ParsedDate) string {
 	sum := sha256.Sum256([]byte(raw))
 	return fmt.Sprintf("%x", sum[:16])
 }
+
+var gedcomMonthAbbrev = [...]string{
+	0:  "",
+	1:  "JAN",
+	2:  "FEB",
+	3:  "MAR",
+	4:  "APR",
+	5:  "MAY",
+	6:  "JUN",
+	7:  "JUL",
+	8:  "AUG",
+	9:  "SEP",
+	10: "OCT",
+	11: "NOV",
+	12: "DEC",
+}
+
+// formatSingleGEDCOMDatePoint renders day/month/year using GEDCOM month tokens.
+// Year 0 means “no date”; month 0 with year yields year-only; day 0 with month yields MON YYYY.
+func formatSingleGEDCOMDatePoint(day, month, year int) string {
+	if year == 0 {
+		return ""
+	}
+	if month >= 1 && month <= 12 && day > 0 {
+		return fmt.Sprintf("%d %s %d", day, gedcomMonthAbbrev[month], year)
+	}
+	if month >= 1 && month <= 12 {
+		return fmt.Sprintf("%s %d", gedcomMonthAbbrev[month], year)
+	}
+	return strconv.Itoa(year)
+}
+
+// FormatGEDCOMDate renders a ParsedDate as a GEDCOM 5.5–style DATE payload when
+// structured fields are available; otherwise returns trimmed Original. Returns ""
+// when there is no usable date text (omit a DATE line in that case).
+func FormatGEDCOMDate(pd ParsedDate) string {
+	orig := strings.TrimSpace(pd.Original)
+
+	var inner string
+	switch pd.Type {
+	case DateBetween:
+		a := formatSingleGEDCOMDatePoint(pd.Day, pd.Month, pd.Year)
+		b := formatSingleGEDCOMDatePoint(pd.EndDay, pd.EndMonth, pd.EndYear)
+		if a != "" && b != "" {
+			inner = "BET " + a + " AND " + b
+		}
+	case DateFromTo:
+		a := formatSingleGEDCOMDatePoint(pd.Day, pd.Month, pd.Year)
+		b := formatSingleGEDCOMDatePoint(pd.EndDay, pd.EndMonth, pd.EndYear)
+		if a != "" && b != "" {
+			inner = "FROM " + a + " TO " + b
+		}
+	case DateAbout:
+		if p := formatSingleGEDCOMDatePoint(pd.Day, pd.Month, pd.Year); p != "" {
+			inner = "ABT " + p
+		}
+	case DateBefore:
+		if p := formatSingleGEDCOMDatePoint(pd.Day, pd.Month, pd.Year); p != "" {
+			inner = "BEF " + p
+		}
+	case DateAfter:
+		if p := formatSingleGEDCOMDatePoint(pd.Day, pd.Month, pd.Year); p != "" {
+			inner = "AFT " + p
+		}
+	case DateCalculated:
+		if p := formatSingleGEDCOMDatePoint(pd.Day, pd.Month, pd.Year); p != "" {
+			inner = "CAL " + p
+		}
+	case DateEstimated:
+		if p := formatSingleGEDCOMDatePoint(pd.Day, pd.Month, pd.Year); p != "" {
+			inner = "EST " + p
+		}
+	default:
+		inner = formatSingleGEDCOMDatePoint(pd.Day, pd.Month, pd.Year)
+	}
+
+	if inner == "" {
+		return orig
+	}
+	if pd.Calendar != "" && !strings.EqualFold(pd.Calendar, "GREGORIAN") {
+		return "@#D" + strings.ToUpper(strings.TrimSpace(pd.Calendar)) + "@ " + inner
+	}
+	return inner
+}

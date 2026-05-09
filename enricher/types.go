@@ -39,12 +39,13 @@ type EnrichedDocument struct {
 	Spouses        []SpouseEdge
 	ParentChild    []ParentChildEdge
 	FamilyChildren []FamilyChildEdge
+	Associates     []AssociateEdge
 
 	// Junction/link tables — names
-	NameForms            []NameForm
-	NameFormGivenNames   []NameFormGivenNameLink
-	NameFormSurnames     []NameFormSurnameLink
-	FamilySurnames       []FamilySurnameLink
+	NameForms          []NameForm
+	NameFormGivenNames []NameFormGivenNameLink
+	NameFormSurnames   []NameFormSurnameLink
+	FamilySurnames     []FamilySurnameLink
 
 	// Junction/link tables — events
 	IndividualEvents []IndividualEventLink
@@ -68,6 +69,7 @@ type EnrichedDocument struct {
 	IndividualMedia []IndividualMediaLink
 	FamilyMedia     []FamilyMediaLink
 	SourceMedia     []SourceMediaLink
+	EventMedia      []EventMediaLink
 
 	Stats Stats
 }
@@ -78,15 +80,21 @@ type EnrichedDocument struct {
 
 // EnrichedIndividual mirrors gedcom_individuals_v2 with denormalized FK indexes.
 type EnrichedIndividual struct {
-	ID               string   `json:"id,omitempty"`
-	Xref             string   `json:"xref"`
-	FullName         string   `json:"full_name"`
-	FullNameLower    string   `json:"full_name_lower"`
-	Sex              string   `json:"sex,omitempty"`
-	BirthDateIndex   int      `json:"birth_date_index"`
-	BirthPlaceIndex  int      `json:"birth_place_index"`
-	DeathDateIndex   int      `json:"death_date_index"`
-	DeathPlaceIndex  int      `json:"death_place_index"`
+	ID                string   `json:"id,omitempty"`
+	Xref              string   `json:"xref"`
+	FullName          string   `json:"full_name"`
+	FullNameLower     string   `json:"full_name_lower"`
+	Sex               string   `json:"sex,omitempty"`
+	BirthDateIndex    int      `json:"birth_date_index"`
+	BirthPlaceIndex   int      `json:"birth_place_index"`
+	DeathDateIndex    int      `json:"death_date_index"`
+	DeathPlaceIndex   int      `json:"death_place_index"`
+	PrimarySurnameLower string `json:"primary_surname_lower,omitempty"`
+	BirthCountry        string `json:"birth_country,omitempty"`
+	BirthCountryLower   string `json:"birth_country_lower,omitempty"`
+	DeathCountry        string `json:"death_country,omitempty"`
+	DeathCountryLower   string `json:"death_country_lower,omitempty"`
+	AgeAtDeath          *int   `json:"age_at_death,omitempty"`
 	OccupationValues  []string `json:"occupation_values,omitempty"`
 	NationalityValues []string `json:"nationality_values,omitempty"`
 	Religion          string   `json:"religion,omitempty"`
@@ -174,6 +182,7 @@ type Event struct {
 	Index      int    `json:"index"`
 	EventType  string `json:"event_type"`
 	CustomType string `json:"custom_type,omitempty"`
+	EventLabel string `json:"event_label,omitempty"`
 	DateIndex  int    `json:"date_index"`
 	PlaceIndex int    `json:"place_index"`
 	Value      string `json:"value,omitempty"`
@@ -225,11 +234,12 @@ type EnrichedRepository struct {
 
 // EnrichedMedia mirrors gedcom_media_v2.
 type EnrichedMedia struct {
-	ID    string `json:"id,omitempty"`
-	Xref  string `json:"xref,omitempty"`
-	File  string `json:"file,omitempty"`
-	Form  string `json:"form,omitempty"`
-	Title string `json:"title,omitempty"`
+	ID          string `json:"id,omitempty"`
+	Xref        string `json:"xref,omitempty"`
+	File        string `json:"file,omitempty"`
+	Form        string `json:"form,omitempty"`
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"` // inline NOTE bodies under OBJE (not xref pointers)
 }
 
 // ---------------------------------------------------------------------------
@@ -261,6 +271,17 @@ type FamilyChildEdge struct {
 	FamilyXref string `json:"family_xref"`
 	ChildXref  string `json:"child_xref"`
 	BirthOrder int    `json:"birth_order"`
+}
+
+// AssociateEdge mirrors GEDCOM ASSO/RELA links between records.
+type AssociateEdge struct {
+	ID             string `json:"id,omitempty"`
+	OwnerXref      string `json:"owner_xref"`
+	OwnerType      string `json:"owner_type"`
+	AssociateXref  string `json:"associate_xref"`
+	Relationship   string `json:"relationship,omitempty"`
+	SourceTag      string `json:"source_tag,omitempty"`
+	OwnerEventType string `json:"owner_event_type,omitempty"`
 }
 
 // ---------------------------------------------------------------------------
@@ -339,9 +360,9 @@ type FamilyNoteLink struct {
 
 // EventNoteLink mirrors gedcom_event_notes_v2.
 type EventNoteLink struct {
-	ID        string `json:"id,omitempty"`
-	EventIndex int   `json:"event_index"`
-	NoteIndex  int   `json:"note_index"`
+	ID         string `json:"id,omitempty"`
+	EventIndex int    `json:"event_index"`
+	NoteIndex  int    `json:"note_index"`
 }
 
 // SourceNoteLink mirrors gedcom_source_notes_v2.
@@ -422,6 +443,13 @@ type SourceMediaLink struct {
 	MediaIndex  int    `json:"media_index"`
 }
 
+// EventMediaLink mirrors gedcom_event_media_v2.
+type EventMediaLink struct {
+	ID         string `json:"id,omitempty"`
+	EventIndex int    `json:"event_index"`
+	MediaIndex int    `json:"media_index"`
+}
+
 // ---------------------------------------------------------------------------
 // Statistics
 // ---------------------------------------------------------------------------
@@ -439,4 +467,5 @@ type Stats struct {
 	Sources      int `json:"sources"`
 	Repositories int `json:"repositories"`
 	Media        int `json:"media"`
+	EventMedia   int `json:"event_media"`
 }

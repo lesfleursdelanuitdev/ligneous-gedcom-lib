@@ -50,6 +50,9 @@ func GenerateIDs(ed *EnrichedDocument) {
 	for i := range ed.FamilyChildren {
 		ed.FamilyChildren[i].ID = uuid.New().String()
 	}
+	for i := range ed.Associates {
+		ed.Associates[i].ID = uuid.New().String()
+	}
 
 	// Junction links — names
 	for i := range ed.NameForms {
@@ -112,5 +115,8 @@ func GenerateIDs(ed *EnrichedDocument) {
 	}
 	for i := range ed.SourceMedia {
 		ed.SourceMedia[i].ID = uuid.New().String()
+	}
+	for i := range ed.EventMedia {
+		ed.EventMedia[i].ID = uuid.New().String()
 	}
 }

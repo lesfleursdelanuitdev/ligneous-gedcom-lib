@@ -1,11 +1,39 @@
 package exporter
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/lesfleursdelanuitdev/ligneous-gedcom-lib/enricher"
 	"github.com/lesfleursdelanuitdev/ligneous-gedcom-lib/gedcom"
+	"github.com/lesfleursdelanuitdev/ligneous-gedcom-lib/pedigreedoc"
 )
+
+// ensureXrefPointer returns a GEDCOM cross-reference in "@...@ " form.
+// Database rows sometimes store "N1" instead of "@N1@"; subordinate NOTE/SOUR
+// lines must use the pointer form per the GEDCOM spec.
+func ensureXrefPointer(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	if strings.HasPrefix(s, "@") && strings.HasSuffix(s, "@") && len(s) >= 2 {
+		return s
+	}
+	inner := strings.Trim(s, "@")
+	if inner == "" {
+		return ""
+	}
+	return "@" + inner + "@"
+}
+
+func parentEdgeFromPC(pc enricher.ParentChildEdge) pedigreedoc.ParentEdge {
+	return pedigreedoc.ParentEdge{
+		ParentXref:       pc.ParentXref,
+		Pedigree:         pc.Pedigree,
+		RelationshipType: pc.RelationshipType,
+	}
+}
 
 // FromEnriched reconstructs a GedcomDocument from an EnrichedDocument.
 // The resulting document can be passed to ToGEDCOM for GEDCOM text output.
@@ -25,23 +53,35 @@ func FromEnriched(ed *enricher.EnrichedDocument) *gedcom.GedcomDocument {
 	famChildren := groupFamilyChildren(ed)
 	parentChild := groupParentChildByChild(ed)
 	spousesByIndi := groupSpousesByIndividual(ed)
+	indiMedia := groupIndividualMedia(ed)
+	famMedia := groupFamilyMedia(ed)
+	famSurnames := groupFamilySurnames(ed)
+	sourceMediaByIdx := groupSourceMediaBySourceIndex(ed)
+	eventSources := groupEventSourcesByEventIndex(ed)
+	eventMedia := groupEventMediaByEventIndex(ed)
+	ownerAssociates := groupAssociatesByOwner(ed)
+	eventAssociates := groupAssociatesByOwnerEvent(ed)
 
 	for _, indi := range ed.Individuals {
 		rec := buildIndividualRecord(ed, indi, indiEvents[indi.Xref],
 			indiNotes[indi.Xref], indiSources[indi.Xref],
-			parentChild[indi.Xref], spousesByIndi[indi.Xref], eventNotes)
+			parentChild[indi.Xref], spousesByIndi[indi.Xref], eventNotes,
+			indiMedia[indi.Xref], eventSources, eventMedia,
+			ownerAssociates["INDI|"+indi.Xref], eventAssociates)
 		doc.Individuals = append(doc.Individuals, rec)
 	}
 
 	for _, fam := range ed.Families {
 		rec := buildFamilyRecord(ed, fam, famEvents[fam.Xref],
 			famNotes[fam.Xref], famSources[fam.Xref],
-			famChildren[fam.Xref], eventNotes)
+			famChildren[fam.Xref], eventNotes,
+			famMedia[fam.Xref], famSurnames[fam.Xref], eventSources, eventMedia,
+			ownerAssociates["FAM|"+fam.Xref], eventAssociates)
 		doc.Families = append(doc.Families, rec)
 	}
 
-	for _, src := range ed.Sources {
-		doc.Sources = append(doc.Sources, buildSourceRecord(src))
+	for i := range ed.Sources {
+		doc.Sources = append(doc.Sources, buildSourceRecord(ed, ed.Sources[i], sourceMediaByIdx[i]))
 	}
 
 	for _, note := range ed.Notes {
@@ -86,6 +126,11 @@ func buildIndividualRecord(
 	parentLinks []enricher.ParentChildEdge,
 	spouseEdges []enricher.SpouseEdge,
 	eventNotes map[int][]enricher.EventNoteLink,
+	mediaLinks []enricher.IndividualMediaLink,
+	eventSources map[int][]enricher.EventSourceLink,
+	eventMedia map[int][]int,
+	associates []enricher.AssociateEdge,
+	eventAssociates map[string][]enricher.AssociateEdge,
 ) gedcom.GedcomRecord {
 	rec := gedcom.GedcomRecord{Level: 0, Tag: "INDI", Xref: indi.Xref}
 
@@ -101,27 +146,67 @@ func buildIndividualRecord(
 	}
 
 	for _, evt := range events {
-		evtRec := buildEventRecord(ed, evt, 1, eventNotes)
+		evtRec := buildEventRecord(ed, evt, 1, eventNotes, eventSources[evt.Index], eventMedia[evt.Index], eventAssociates)
 		rec.AddChild(evtRec)
 	}
 
-	famcXrefs := make(map[string]bool)
+	appendIndividualScalarAttributes(&rec, indi, events)
+
+	byFam := make(map[string][]enricher.ParentChildEdge)
 	for _, pc := range parentLinks {
-		if !famcXrefs[pc.FamilyXref] {
-			famcXrefs[pc.FamilyXref] = true
-			child := gedcom.GedcomRecord{Level: 1, Tag: "FAMC", Value: pc.FamilyXref}
-			if pc.Pedigree != "" {
-				child.AddChild(gedcom.GedcomRecord{Level: 2, Tag: "PEDI", Value: pc.Pedigree})
+		byFam[pc.FamilyXref] = append(byFam[pc.FamilyXref], pc)
+	}
+	famKeys := make([]string, 0, len(byFam))
+	for k := range byFam {
+		famKeys = append(famKeys, k)
+	}
+	sort.Strings(famKeys)
+	for _, famXref := range famKeys {
+		edges := byFam[famXref]
+		child := gedcom.GedcomRecord{Level: 1, Tag: "FAMC", Value: ensureXrefPointer(famXref)}
+		if len(edges) == 2 &&
+			pedigreedoc.IsMixedBiologicalAdoptivePair(parentEdgeFromPC(edges[0]), parentEdgeFromPC(edges[1])) {
+			child.AddChild(gedcom.GedcomRecord{Level: 2, Tag: "PEDI", Value: "birth"})
+			bio, adopt := pedigreedoc.BiologicalAndAdoptiveXrefs(parentEdgeFromPC(edges[0]), parentEdgeFromPC(edges[1]))
+			child.AddChild(buildInlineNote(2, pedigreedoc.FormatMixedParentageNote(bio, adopt)))
+		} else {
+			pedi := ""
+			for _, e := range edges {
+				if strings.TrimSpace(e.Pedigree) != "" {
+					pedi = e.Pedigree
+					break
+				}
 			}
-			rec.AddChild(child)
+			if pedi != "" {
+				child.AddChild(gedcom.GedcomRecord{Level: 2, Tag: "PEDI", Value: pedi})
+			}
 		}
+		rec.AddChild(child)
 	}
 
 	famsXrefs := make(map[string]bool)
 	for _, se := range spouseEdges {
+		if se.FamilyXref == "" {
+			continue
+		}
 		if !famsXrefs[se.FamilyXref] {
 			famsXrefs[se.FamilyXref] = true
-			rec.AddChild(gedcom.GedcomRecord{Level: 1, Tag: "FAMS", Value: se.FamilyXref})
+			rec.AddChild(gedcom.GedcomRecord{Level: 1, Tag: "FAMS", Value: ensureXrefPointer(se.FamilyXref)})
+		}
+	}
+
+	// Single-parent families: there are no `gedcom_spouses_v2` rows (and thus no SpouseEdge
+	// entries) when only one HUSB/WIFE slot is filled, but the parent still needs a FAMS
+	// pointer to that FAM (matches common GEDCOM practice and our DB model).
+	for _, fam := range ed.Families {
+		if fam.Xref == "" {
+			continue
+		}
+		soloHusband := fam.HusbandXref == indi.Xref && fam.WifeXref == ""
+		soloWife := fam.WifeXref == indi.Xref && fam.HusbandXref == ""
+		if (soloHusband || soloWife) && !famsXrefs[fam.Xref] {
+			famsXrefs[fam.Xref] = true
+			rec.AddChild(gedcom.GedcomRecord{Level: 1, Tag: "FAMS", Value: ensureXrefPointer(fam.Xref)})
 		}
 	}
 
@@ -129,7 +214,7 @@ func buildIndividualRecord(
 		if nl.NoteIndex >= 0 && nl.NoteIndex < len(ed.Notes) {
 			note := ed.Notes[nl.NoteIndex]
 			if note.IsTopLevel && note.Xref != "" {
-				rec.AddChild(gedcom.GedcomRecord{Level: 1, Tag: "NOTE", Value: note.Xref})
+				rec.AddChild(gedcom.GedcomRecord{Level: 1, Tag: "NOTE", Value: ensureXrefPointer(note.Xref)})
 			} else if note.Content != "" {
 				rec.AddChild(buildInlineNote(1, note.Content))
 			}
@@ -139,13 +224,16 @@ func buildIndividualRecord(
 	for _, sl := range sourceLinks {
 		if sl.SourceIndex >= 0 && sl.SourceIndex < len(ed.Sources) {
 			src := ed.Sources[sl.SourceIndex]
-			sourRec := gedcom.GedcomRecord{Level: 1, Tag: "SOUR", Value: src.Xref}
+			sourRec := gedcom.GedcomRecord{Level: 1, Tag: "SOUR", Value: ensureXrefPointer(src.Xref)}
 			if sl.Page != "" {
 				sourRec.AddChild(gedcom.GedcomRecord{Level: 2, Tag: "PAGE", Value: sl.Page})
 			}
 			rec.AddChild(sourRec)
 		}
 	}
+
+	appendOBJELinksFromIndividualMediaLinks(&rec, ed, mediaLinks)
+	appendAssociationRecords(&rec, associates, 1)
 
 	return rec
 }
@@ -161,15 +249,36 @@ func buildNameRecords(ed *enricher.EnrichedDocument, indi enricher.EnrichedIndiv
 		var givnParts []string
 		var surnParts []string
 
+		var gnLinks []enricher.NameFormGivenNameLink
 		for _, gnLink := range ed.NameFormGivenNames {
 			if gnLink.NameFormIndex == nfIdx && gnLink.GivenNameIndex >= 0 && gnLink.GivenNameIndex < len(ed.GivenNames) {
-				givnParts = append(givnParts, ed.GivenNames[gnLink.GivenNameIndex].Value)
+				gnLinks = append(gnLinks, gnLink)
 			}
 		}
+		sort.Slice(gnLinks, func(i, j int) bool {
+			if gnLinks[i].Position != gnLinks[j].Position {
+				return gnLinks[i].Position < gnLinks[j].Position
+			}
+			return gnLinks[i].GivenNameIndex < gnLinks[j].GivenNameIndex
+		})
+		for _, gnLink := range gnLinks {
+			givnParts = append(givnParts, ed.GivenNames[gnLink.GivenNameIndex].Value)
+		}
+
+		var snLinks []enricher.NameFormSurnameLink
 		for _, snLink := range ed.NameFormSurnames {
 			if snLink.NameFormIndex == nfIdx && snLink.SurnameIndex >= 0 && snLink.SurnameIndex < len(ed.Surnames) {
-				surnParts = append(surnParts, ed.Surnames[snLink.SurnameIndex].Value)
+				snLinks = append(snLinks, snLink)
 			}
+		}
+		sort.Slice(snLinks, func(i, j int) bool {
+			if snLinks[i].Position != snLinks[j].Position {
+				return snLinks[i].Position < snLinks[j].Position
+			}
+			return snLinks[i].SurnameIndex < snLinks[j].SurnameIndex
+		})
+		for _, snLink := range snLinks {
+			surnParts = append(surnParts, ed.Surnames[snLink.SurnameIndex].Value)
 		}
 
 		var fullVal string
@@ -204,6 +313,9 @@ func buildEventRecord(
 	evt enricher.Event,
 	level int,
 	eventNotes map[int][]enricher.EventNoteLink,
+	eventSources []enricher.EventSourceLink,
+	eventMediaIndices []int,
+	eventAssociates map[string][]enricher.AssociateEdge,
 ) gedcom.GedcomRecord {
 	tag := evt.EventType
 	if evt.CustomType != "" && tag == "EVEN" {
@@ -215,7 +327,9 @@ func buildEventRecord(
 	}
 
 	if evt.DateIndex >= 0 && evt.DateIndex < len(ed.Dates) {
-		evtRec.AddChild(gedcom.GedcomRecord{Level: level + 1, Tag: "DATE", Value: ed.Dates[evt.DateIndex].Original})
+		if ds := enricher.FormatGEDCOMDate(ed.Dates[evt.DateIndex]); ds != "" {
+			evtRec.AddChild(gedcom.GedcomRecord{Level: level + 1, Tag: "DATE", Value: ds})
+		}
 	}
 	if evt.PlaceIndex >= 0 && evt.PlaceIndex < len(ed.Places) {
 		evtRec.AddChild(gedcom.GedcomRecord{Level: level + 1, Tag: "PLAC", Value: ed.Places[evt.PlaceIndex].Original})
@@ -234,12 +348,27 @@ func buildEventRecord(
 		if enl.NoteIndex >= 0 && enl.NoteIndex < len(ed.Notes) {
 			note := ed.Notes[enl.NoteIndex]
 			if note.IsTopLevel && note.Xref != "" {
-				evtRec.AddChild(gedcom.GedcomRecord{Level: level + 1, Tag: "NOTE", Value: note.Xref})
+				evtRec.AddChild(gedcom.GedcomRecord{Level: level + 1, Tag: "NOTE", Value: ensureXrefPointer(note.Xref)})
 			} else if note.Content != "" {
 				evtRec.AddChild(buildInlineNote(level+1, note.Content))
 			}
 		}
 	}
+
+	for _, sl := range eventSources {
+		if sl.SourceIndex < 0 || sl.SourceIndex >= len(ed.Sources) {
+			continue
+		}
+		src := ed.Sources[sl.SourceIndex]
+		sourRec := gedcom.GedcomRecord{Level: level + 1, Tag: "SOUR", Value: ensureXrefPointer(src.Xref)}
+		if sl.Page != "" {
+			sourRec.AddChild(gedcom.GedcomRecord{Level: level + 2, Tag: "PAGE", Value: sl.Page})
+		}
+		evtRec.AddChild(sourRec)
+	}
+
+	appendOBJELinksFromMediaIndices(&evtRec, ed, eventMediaIndices, level+1)
+	appendAssociationRecords(&evtRec, eventAssociates[eventAssociationKey(evt.OwnerType, evt.OwnerXref, evt.EventType)], level+1)
 
 	return evtRec
 }
@@ -252,22 +381,30 @@ func buildFamilyRecord(
 	sourceLinks []enricher.FamilySourceLink,
 	children []enricher.FamilyChildEdge,
 	eventNotes map[int][]enricher.EventNoteLink,
+	mediaLinks []enricher.FamilyMediaLink,
+	surnameLinks []enricher.FamilySurnameLink,
+	eventSources map[int][]enricher.EventSourceLink,
+	eventMedia map[int][]int,
+	associates []enricher.AssociateEdge,
+	eventAssociates map[string][]enricher.AssociateEdge,
 ) gedcom.GedcomRecord {
 	rec := gedcom.GedcomRecord{Level: 0, Tag: "FAM", Xref: fam.Xref}
 
 	if fam.HusbandXref != "" {
-		rec.AddChild(gedcom.GedcomRecord{Level: 1, Tag: "HUSB", Value: fam.HusbandXref})
+		rec.AddChild(gedcom.GedcomRecord{Level: 1, Tag: "HUSB", Value: ensureXrefPointer(fam.HusbandXref)})
 	}
 	if fam.WifeXref != "" {
-		rec.AddChild(gedcom.GedcomRecord{Level: 1, Tag: "WIFE", Value: fam.WifeXref})
+		rec.AddChild(gedcom.GedcomRecord{Level: 1, Tag: "WIFE", Value: ensureXrefPointer(fam.WifeXref)})
 	}
 
 	for _, child := range children {
-		rec.AddChild(gedcom.GedcomRecord{Level: 1, Tag: "CHIL", Value: child.ChildXref})
+		rec.AddChild(gedcom.GedcomRecord{Level: 1, Tag: "CHIL", Value: ensureXrefPointer(child.ChildXref)})
 	}
 
+	appendFamilySurnameNote(&rec, ed, surnameLinks)
+
 	for _, evt := range events {
-		evtRec := buildEventRecord(ed, evt, 1, eventNotes)
+		evtRec := buildEventRecord(ed, evt, 1, eventNotes, eventSources[evt.Index], eventMedia[evt.Index], eventAssociates)
 		rec.AddChild(evtRec)
 	}
 
@@ -275,7 +412,7 @@ func buildFamilyRecord(
 		if nl.NoteIndex >= 0 && nl.NoteIndex < len(ed.Notes) {
 			note := ed.Notes[nl.NoteIndex]
 			if note.IsTopLevel && note.Xref != "" {
-				rec.AddChild(gedcom.GedcomRecord{Level: 1, Tag: "NOTE", Value: note.Xref})
+				rec.AddChild(gedcom.GedcomRecord{Level: 1, Tag: "NOTE", Value: ensureXrefPointer(note.Xref)})
 			} else if note.Content != "" {
 				rec.AddChild(buildInlineNote(1, note.Content))
 			}
@@ -285,7 +422,7 @@ func buildFamilyRecord(
 	for _, sl := range sourceLinks {
 		if sl.SourceIndex >= 0 && sl.SourceIndex < len(ed.Sources) {
 			src := ed.Sources[sl.SourceIndex]
-			sourRec := gedcom.GedcomRecord{Level: 1, Tag: "SOUR", Value: src.Xref}
+			sourRec := gedcom.GedcomRecord{Level: 1, Tag: "SOUR", Value: ensureXrefPointer(src.Xref)}
 			if sl.Page != "" {
 				sourRec.AddChild(gedcom.GedcomRecord{Level: 2, Tag: "PAGE", Value: sl.Page})
 			}
@@ -293,11 +430,14 @@ func buildFamilyRecord(
 		}
 	}
 
+	appendOBJELinksFromFamilyMediaLinks(&rec, ed, mediaLinks)
+	appendAssociationRecords(&rec, associates, 1)
+
 	return rec
 }
 
-func buildSourceRecord(src enricher.EnrichedSource) gedcom.GedcomRecord {
-	rec := gedcom.GedcomRecord{Level: 0, Tag: "SOUR", Xref: src.Xref}
+func buildSourceRecord(ed *enricher.EnrichedDocument, src enricher.EnrichedSource, mediaIndices []int) gedcom.GedcomRecord {
+	rec := gedcom.GedcomRecord{Level: 0, Tag: "SOUR", Xref: ensureXrefPointer(src.Xref)}
 	if src.Title != "" {
 		rec.AddChild(gedcom.GedcomRecord{Level: 1, Tag: "TITL", Value: src.Title})
 	}
@@ -310,30 +450,32 @@ func buildSourceRecord(src enricher.EnrichedSource) gedcom.GedcomRecord {
 	if src.Abbreviation != "" {
 		rec.AddChild(gedcom.GedcomRecord{Level: 1, Tag: "ABBR", Value: src.Abbreviation})
 	}
-	if src.Text != "" {
-		rec.AddChild(gedcom.GedcomRecord{Level: 1, Tag: "TEXT", Value: src.Text})
+	if strings.TrimSpace(src.Text) != "" {
+		txt := gedcom.GedcomRecord{Level: 1, Tag: "TEXT"}
+		appendWrappedTaggedOntoRecord(&txt, 1, "", "TEXT", src.Text)
+		rec.AddChild(txt)
 	}
 	if src.RepositoryXref != "" {
-		repoRef := gedcom.GedcomRecord{Level: 1, Tag: "REPO", Value: src.RepositoryXref}
+		repoRef := gedcom.GedcomRecord{Level: 1, Tag: "REPO", Value: ensureXrefPointer(src.RepositoryXref)}
 		if src.CallNumber != "" {
 			repoRef.AddChild(gedcom.GedcomRecord{Level: 2, Tag: "CALN", Value: src.CallNumber})
 		}
 		rec.AddChild(repoRef)
 	}
+
+	appendOBJELinksFromMediaIndices(&rec, ed, mediaIndices, 1)
+
 	return rec
 }
 
 func buildNoteRecord(note enricher.EnrichedNote) gedcom.GedcomRecord {
-	lines := strings.Split(note.Content, "\n")
-	rec := gedcom.GedcomRecord{Level: 0, Tag: "NOTE", Xref: note.Xref, Value: lines[0]}
-	for _, line := range lines[1:] {
-		rec.AddChild(gedcom.GedcomRecord{Level: 1, Tag: "CONT", Value: line})
-	}
+	rec := gedcom.GedcomRecord{Level: 0, Tag: "NOTE", Xref: ensureXrefPointer(note.Xref)}
+	appendWrappedNoteOntoRecord(&rec, 0, note.Xref, note.Content)
 	return rec
 }
 
 func buildRepositoryRecord(repo enricher.EnrichedRepository) gedcom.GedcomRecord {
-	rec := gedcom.GedcomRecord{Level: 0, Tag: "REPO", Xref: repo.Xref}
+	rec := gedcom.GedcomRecord{Level: 0, Tag: "REPO", Xref: ensureXrefPointer(repo.Xref)}
 	if repo.Name != "" {
 		rec.AddChild(gedcom.GedcomRecord{Level: 1, Tag: "NAME", Value: repo.Name})
 	}
@@ -363,7 +505,7 @@ func buildRepositoryRecord(repo enricher.EnrichedRepository) gedcom.GedcomRecord
 }
 
 func buildMediaRecord(media enricher.EnrichedMedia) gedcom.GedcomRecord {
-	rec := gedcom.GedcomRecord{Level: 0, Tag: "OBJE", Xref: media.Xref}
+	rec := gedcom.GedcomRecord{Level: 0, Tag: "OBJE", Xref: ensureXrefPointer(media.Xref)}
 	if media.File != "" {
 		fileRec := gedcom.GedcomRecord{Level: 1, Tag: "FILE", Value: media.File}
 		if media.Form != "" {
@@ -374,15 +516,15 @@ func buildMediaRecord(media enricher.EnrichedMedia) gedcom.GedcomRecord {
 	if media.Title != "" {
 		rec.AddChild(gedcom.GedcomRecord{Level: 1, Tag: "TITL", Value: media.Title})
 	}
+	if strings.TrimSpace(media.Description) != "" {
+		rec.AddChild(buildInlineNote(1, strings.TrimSpace(media.Description)))
+	}
 	return rec
 }
 
 func buildInlineNote(level int, content string) gedcom.GedcomRecord {
-	lines := strings.Split(content, "\n")
-	rec := gedcom.GedcomRecord{Level: level, Tag: "NOTE", Value: lines[0]}
-	for _, line := range lines[1:] {
-		rec.AddChild(gedcom.GedcomRecord{Level: level + 1, Tag: "CONT", Value: line})
-	}
+	rec := gedcom.GedcomRecord{Level: level, Tag: "NOTE"}
+	appendWrappedNoteOntoRecord(&rec, level, "", content)
 	return rec
 }
 
@@ -396,6 +538,14 @@ func groupEventsByOwner(ed *enricher.EnrichedDocument, ownerType string) map[str
 		if evt.OwnerType == ownerType {
 			m[evt.OwnerXref] = append(m[evt.OwnerXref], evt)
 		}
+	}
+	for k := range m {
+		sort.Slice(m[k], func(i, j int) bool {
+			if m[k][i].SortOrder != m[k][j].SortOrder {
+				return m[k][i].SortOrder < m[k][j].SortOrder
+			}
+			return m[k][i].Index < m[k][j].Index
+		})
 	}
 	return m
 }
@@ -464,6 +614,185 @@ func groupSpousesByIndividual(ed *enricher.EnrichedDocument) map[string][]enrich
 	return m
 }
 
+func groupIndividualMedia(ed *enricher.EnrichedDocument) map[string][]enricher.IndividualMediaLink {
+	m := make(map[string][]enricher.IndividualMediaLink)
+	for _, lm := range ed.IndividualMedia {
+		m[lm.IndividualXref] = append(m[lm.IndividualXref], lm)
+	}
+	return m
+}
+
+func groupFamilyMedia(ed *enricher.EnrichedDocument) map[string][]enricher.FamilyMediaLink {
+	m := make(map[string][]enricher.FamilyMediaLink)
+	for _, lm := range ed.FamilyMedia {
+		m[lm.FamilyXref] = append(m[lm.FamilyXref], lm)
+	}
+	return m
+}
+
+func groupFamilySurnames(ed *enricher.EnrichedDocument) map[string][]enricher.FamilySurnameLink {
+	m := make(map[string][]enricher.FamilySurnameLink)
+	for _, fs := range ed.FamilySurnames {
+		m[fs.FamilyXref] = append(m[fs.FamilyXref], fs)
+	}
+	return m
+}
+
+func groupSourceMediaBySourceIndex(ed *enricher.EnrichedDocument) map[int][]int {
+	m := make(map[int][]int)
+	for _, sm := range ed.SourceMedia {
+		if sm.SourceIndex < 0 {
+			continue
+		}
+		m[sm.SourceIndex] = append(m[sm.SourceIndex], sm.MediaIndex)
+	}
+	return m
+}
+
+func groupEventSourcesByEventIndex(ed *enricher.EnrichedDocument) map[int][]enricher.EventSourceLink {
+	m := make(map[int][]enricher.EventSourceLink)
+	for _, es := range ed.EventSources {
+		m[es.EventIndex] = append(m[es.EventIndex], es)
+	}
+	return m
+}
+
+func groupEventMediaByEventIndex(ed *enricher.EnrichedDocument) map[int][]int {
+	m := make(map[int][]int)
+	for _, em := range ed.EventMedia {
+		m[em.EventIndex] = append(m[em.EventIndex], em.MediaIndex)
+	}
+	return m
+}
+
+func groupAssociatesByOwner(ed *enricher.EnrichedDocument) map[string][]enricher.AssociateEdge {
+	m := make(map[string][]enricher.AssociateEdge)
+	for _, a := range ed.Associates {
+		if a.OwnerEventType != "" {
+			continue
+		}
+		m[a.OwnerType+"|"+a.OwnerXref] = append(m[a.OwnerType+"|"+a.OwnerXref], a)
+	}
+	return m
+}
+
+func groupAssociatesByOwnerEvent(ed *enricher.EnrichedDocument) map[string][]enricher.AssociateEdge {
+	m := make(map[string][]enricher.AssociateEdge)
+	for _, a := range ed.Associates {
+		if a.OwnerEventType == "" {
+			continue
+		}
+		m[eventAssociationKey(a.OwnerType, a.OwnerXref, a.OwnerEventType)] = append(m[eventAssociationKey(a.OwnerType, a.OwnerXref, a.OwnerEventType)], a)
+	}
+	return m
+}
+
+func eventAssociationKey(ownerType, ownerXref, eventType string) string {
+	return ownerType + "|" + ownerXref + "|" + eventType
+}
+
+func appendAssociationRecords(rec *gedcom.GedcomRecord, associates []enricher.AssociateEdge, level int) {
+	for _, a := range associates {
+		target := ensureXrefPointer(a.AssociateXref)
+		if target == "" {
+			continue
+		}
+		assoRec := gedcom.GedcomRecord{Level: level, Tag: "ASSO", Value: target}
+		if r := strings.TrimSpace(a.Relationship); r != "" {
+			assoRec.AddChild(gedcom.GedcomRecord{Level: level + 1, Tag: "RELA", Value: r})
+		}
+		rec.AddChild(assoRec)
+	}
+}
+
+func appendOBJELinksFromMediaIndices(rec *gedcom.GedcomRecord, ed *enricher.EnrichedDocument, mediaIndices []int, childLevel int) {
+	seen := make(map[string]bool)
+	for _, idx := range mediaIndices {
+		if idx < 0 || idx >= len(ed.Media) {
+			continue
+		}
+		xref := ensureXrefPointer(ed.Media[idx].Xref)
+		if xref == "" {
+			continue
+		}
+		if seen[xref] {
+			continue
+		}
+		seen[xref] = true
+		rec.AddChild(gedcom.GedcomRecord{Level: childLevel, Tag: "OBJE", Value: xref})
+	}
+}
+
+func appendOBJELinksFromIndividualMediaLinks(rec *gedcom.GedcomRecord, ed *enricher.EnrichedDocument, links []enricher.IndividualMediaLink) {
+	indices := make([]int, 0, len(links))
+	for _, l := range links {
+		indices = append(indices, l.MediaIndex)
+	}
+	appendOBJELinksFromMediaIndices(rec, ed, indices, 1)
+}
+
+func appendOBJELinksFromFamilyMediaLinks(rec *gedcom.GedcomRecord, ed *enricher.EnrichedDocument, links []enricher.FamilyMediaLink) {
+	indices := make([]int, 0, len(links))
+	for _, l := range links {
+		indices = append(indices, l.MediaIndex)
+	}
+	appendOBJELinksFromMediaIndices(rec, ed, indices, 1)
+}
+
+func appendFamilySurnameNote(rec *gedcom.GedcomRecord, ed *enricher.EnrichedDocument, links []enricher.FamilySurnameLink) {
+	if len(links) == 0 {
+		return
+	}
+	var parts []string
+	for _, l := range links {
+		if l.SurnameIndex >= 0 && l.SurnameIndex < len(ed.Surnames) {
+			parts = append(parts, ed.Surnames[l.SurnameIndex].Value)
+		}
+	}
+	if len(parts) == 0 {
+		return
+	}
+	rec.AddChild(gedcom.GedcomRecord{Level: 1, Tag: "NOTE", Value: "Family surname(s): " + strings.Join(parts, ", ")})
+}
+
+func eventAttributeValues(events []enricher.Event, tag string) map[string]bool {
+	m := make(map[string]bool)
+	for _, e := range events {
+		if e.EventType == tag {
+			if v := strings.TrimSpace(e.Value); v != "" {
+				m[v] = true
+			}
+		}
+	}
+	return m
+}
+
+func appendIndividualScalarAttributes(rec *gedcom.GedcomRecord, indi enricher.EnrichedIndividual, events []enricher.Event) {
+	occSeen := eventAttributeValues(events, "OCCU")
+	natiSeen := eventAttributeValues(events, "NATI")
+	reliSeen := eventAttributeValues(events, "RELI")
+
+	for _, v := range indi.OccupationValues {
+		v = strings.TrimSpace(v)
+		if v == "" || occSeen[v] {
+			continue
+		}
+		occSeen[v] = true
+		rec.AddChild(gedcom.GedcomRecord{Level: 1, Tag: "OCCU", Value: v})
+	}
+	for _, v := range indi.NationalityValues {
+		v = strings.TrimSpace(v)
+		if v == "" || natiSeen[v] {
+			continue
+		}
+		natiSeen[v] = true
+		rec.AddChild(gedcom.GedcomRecord{Level: 1, Tag: "NATI", Value: v})
+	}
+	if r := strings.TrimSpace(indi.Religion); r != "" && !reliSeen[r] {
+		rec.AddChild(gedcom.GedcomRecord{Level: 1, Tag: "RELI", Value: r})
+	}
+}
+
 // EnrichedToGEDCOM is a convenience function that converts an EnrichedDocument
 // directly to GEDCOM text format.
 func EnrichedToGEDCOM(ed *enricher.EnrichedDocument) string {
@@ -492,4 +821,3 @@ func FromEnrichedToCSV(ed *enricher.EnrichedDocument) (string, error) {
 	doc := FromEnriched(ed)
 	return ToCSVString(doc)
 }
-

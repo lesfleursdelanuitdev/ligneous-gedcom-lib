@@ -88,6 +88,7 @@ func ValidateWithOptions(doc *gedcom.GedcomDocument, opts *Options) []*Validatio
 	errs = append(errs, validateIndividuals(doc)...)
 	errs = append(errs, validateFamilies(doc)...)
 	errs = append(errs, validateXRefs(doc)...)
+	errs = append(errs, validateAssociations(doc)...)
 
 	if opts.DateConsistency {
 		errs = append(errs, validateDateConsistency(doc, opts)...)
@@ -258,6 +259,68 @@ func validateXRefs(doc *gedcom.GedcomDocument) []*ValidationError {
 
 func isXref(s string) bool {
 	return len(s) > 2 && s[0] == '@' && s[len(s)-1] == '@'
+}
+
+func validateAssociations(doc *gedcom.GedcomDocument) []*ValidationError {
+	var errs []*ValidationError
+	idx := doc.XRefIndex()
+
+	validateOwner := func(owner gedcom.GedcomRecord, ownerType string) {
+		sourceXref := owner.Xref
+		if sourceXref == "" {
+			sourceXref = ownerType
+		}
+		var walk func(gedcom.GedcomRecord)
+		walk = func(rec gedcom.GedcomRecord) {
+			for _, child := range rec.Children {
+				if child.Tag == "ASSO" {
+					target := strings.TrimSpace(child.Value)
+					if target == "" {
+						errs = append(errs, &ValidationError{
+							Severity: SeverityWarning,
+							Code:     "MISSING_ASSOCIATE_XREF",
+							Message:  "ASSO tag is missing an associated xref pointer",
+							Xref:     sourceXref,
+						})
+					} else if targetRec, ok := idx[target]; !ok {
+						errs = append(errs, &ValidationError{
+							Severity: SeverityError,
+							Code:     "BROKEN_ASSOCIATE_XREF",
+							Message:  fmt.Sprintf("ASSO reference to non-existent record %s", target),
+							Xref:     sourceXref,
+						})
+					} else if targetRec.Tag != "INDI" {
+						errs = append(errs, &ValidationError{
+							Severity: SeverityWarning,
+							Code:     "INVALID_ASSOCIATE_TARGET",
+							Message:  fmt.Sprintf("ASSO reference %s points to %s, expected INDI", target, targetRec.Tag),
+							Xref:     sourceXref,
+						})
+					}
+
+					if strings.TrimSpace(child.ChildValue("RELA")) == "" {
+						errs = append(errs, &ValidationError{
+							Severity: SeverityWarning,
+							Code:     "MISSING_ASSOCIATE_RELA",
+							Message:  "ASSO tag should include a RELA descriptor",
+							Xref:     sourceXref,
+						})
+					}
+				}
+				walk(child)
+			}
+		}
+		walk(owner)
+	}
+
+	for _, indi := range doc.Individuals {
+		validateOwner(indi, "INDI")
+	}
+	for _, fam := range doc.Families {
+		validateOwner(fam, "FAM")
+	}
+
+	return errs
 }
 
 // validateDateConsistency checks temporal logic of events.

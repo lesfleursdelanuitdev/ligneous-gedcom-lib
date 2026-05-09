@@ -4,20 +4,33 @@ import (
 	"strings"
 
 	"github.com/lesfleursdelanuitdev/ligneous-gedcom-lib/gedcom"
+	"github.com/lesfleursdelanuitdev/ligneous-gedcom-lib/pedigreedoc"
 )
 
+// individualEventTags lists level-1 INDI subrecords that use INDIVIDUAL_EVENT_STRUCTURE,
+// INDIVIDUAL_ATTRIBUTE_STRUCTURE, or LDS_INDIVIDUAL_ORDINANCE (GEDCOM 5.5).
 var individualEventTags = map[string]bool{
+	// INDIVIDUAL_EVENT_STRUCTURE
 	"BIRT": true, "CHR": true, "DEAT": true, "BURI": true, "CREM": true,
 	"ADOP": true, "BAPM": true, "BARM": true, "BASM": true, "BLES": true,
 	"CHRA": true, "CONF": true, "FCOM": true, "ORDN": true, "NATU": true,
 	"EMIG": true, "IMMI": true, "CENS": true, "PROB": true, "WILL": true,
-	"GRAD": true, "RETI": true, "EVEN": true, "RESI": true,
-	"OCCU": true, "NATI": true, "RELI": true,
+	"GRAD": true, "RETI": true, "EVEN": true,
+	// INDIVIDUAL_ATTRIBUTE_STRUCTURE (same event-detail pattern as events)
+	"CAST": true, "DSCR": true, "EDUC": true, "IDNO": true, "NATI": true,
+	"NCHI": true, "NMR": true, "OCCU": true, "PROP": true, "RELI": true,
+	"RESI": true, "SSN": true, "TITL": true, "FACT": true,
+	// LDS_INDIVIDUAL_ORDINANCE
+	"BAPL": true, "CONL": true, "ENDL": true, "SLGC": true,
 }
 
+// familyEventTags lists level-1 FAM subrecords from FAMILY_EVENT_STRUCTURE plus
+// LDS_SPOUSE_SEALING (GEDCOM 5.5).
 var familyEventTags = map[string]bool{
 	"MARR": true, "ANUL": true, "DIV": true, "DIVF": true, "ENGA": true,
-	"MARB": true, "MARC": true, "MARL": true, "MARS": true, "EVEN": true,
+	"MARB": true, "MARC": true, "MARL": true, "MARS": true, "CENS": true,
+	"RESI": true, "EVEN": true,
+	"SLGS": true,
 }
 
 // Enrich takes a raw GedcomDocument and produces an EnrichedDocument with all
@@ -44,6 +57,7 @@ func Enrich(doc *gedcom.GedcomDocument) *EnrichedDocument {
 	// structured individual/family summaries
 	e.extractIndividualData(ed)
 	e.extractFamilyData(ed)
+	e.extractAssociations(ed)
 
 	// Phase 6-8: Build relationship edges
 	e.buildRelationshipEdges(ed)
@@ -78,6 +92,7 @@ func Enrich(doc *gedcom.GedcomDocument) *EnrichedDocument {
 		Sources:      len(ed.Sources),
 		Repositories: len(ed.Repositories),
 		Media:        len(ed.Media),
+		EventMedia:   len(ed.EventMedia),
 	}
 
 	return ed
@@ -193,8 +208,8 @@ func (e *enricherState) extractIndividualData(ed *EnrichedDocument) {
 			continue
 		}
 
-		// Extract names
-		e.extractIndividualNames(ed, indi)
+		// Extract names (first form = primary; fills NameForms + links)
+		primarySurnameLower := e.extractIndividualNames(ed, indi)
 
 		// Build structured individual summary
 		fullName := ""
@@ -204,14 +219,15 @@ func (e *enricherState) extractIndividualData(ed *EnrichedDocument) {
 		}
 
 		ei := EnrichedIndividual{
-			Xref:            indi.Xref,
-			FullName:        fullName,
-			FullNameLower:   strings.ToLower(fullName),
-			Sex:             indi.ChildValue("SEX"),
-			BirthDateIndex:  -1,
-			BirthPlaceIndex: -1,
-			DeathDateIndex:  -1,
-			DeathPlaceIndex: -1,
+			Xref:                  indi.Xref,
+			FullName:              fullName,
+			FullNameLower:         strings.ToLower(fullName),
+			PrimarySurnameLower:   primarySurnameLower,
+			Sex:                   indi.ChildValue("SEX"),
+			BirthDateIndex:        -1,
+			BirthPlaceIndex:       -1,
+			DeathDateIndex:        -1,
+			DeathPlaceIndex:       -1,
 		}
 
 		// Extract attribute values (OCCU, NATI, RELI) - both as events and as scalars
@@ -264,15 +280,48 @@ func (e *enricherState) extractIndividualData(ed *EnrichedDocument) {
 			sortOrder++
 		}
 
+		if ei.BirthPlaceIndex >= 0 && ei.BirthPlaceIndex < len(e.places) {
+			c := strings.TrimSpace(e.places[ei.BirthPlaceIndex].Country)
+			if c != "" {
+				ei.BirthCountry = c
+				ei.BirthCountryLower = strings.ToLower(c)
+			}
+		}
+		if ei.DeathPlaceIndex >= 0 && ei.DeathPlaceIndex < len(e.places) {
+			c := strings.TrimSpace(e.places[ei.DeathPlaceIndex].Country)
+			if c != "" {
+				ei.DeathCountry = c
+				ei.DeathCountryLower = strings.ToLower(c)
+			}
+		}
+		var birthY, deathY int
+		hasBirthY, hasDeathY := false, false
+		if ei.BirthDateIndex >= 0 && ei.BirthDateIndex < len(e.dates) {
+			if y := e.dates[ei.BirthDateIndex].Year; y != 0 {
+				birthY, hasBirthY = y, true
+			}
+		}
+		if ei.DeathDateIndex >= 0 && ei.DeathDateIndex < len(e.dates) {
+			if y := e.dates[ei.DeathDateIndex].Year; y != 0 {
+				deathY, hasDeathY = y, true
+			}
+		}
+		if hasBirthY && hasDeathY && deathY > birthY {
+			ad := deathY - birthY
+			ei.AgeAtDeath = &ad
+		}
+
 		ed.Individuals = append(ed.Individuals, ei)
 	}
 }
 
-func (e *enricherState) extractIndividualNames(ed *EnrichedDocument, indi gedcom.GedcomRecord) {
+func (e *enricherState) extractIndividualNames(ed *EnrichedDocument, indi gedcom.GedcomRecord) string {
 	nameRecs := indi.ChildrenByTag("NAME")
 	if len(nameRecs) == 0 {
-		return
+		return ""
 	}
+
+	var primarySurnameLower string
 
 	for formIdx, nameRec := range nameRecs {
 		fullName := nameRec.Value
@@ -306,6 +355,9 @@ func (e *enricherState) extractIndividualNames(ed *EnrichedDocument, indi gedcom
 					SurnameIndex:  surnIdx,
 					Position:      1,
 				})
+				if formIdx == 0 {
+					primarySurnameLower = e.surnames[surnIdx].Lower
+				}
 			}
 		}
 
@@ -327,6 +379,7 @@ func (e *enricherState) extractIndividualNames(ed *EnrichedDocument, indi gedcom
 			}
 		}
 	}
+	return primarySurnameLower
 }
 
 // extractFamilyData processes all families: builds EnrichedFamily, extracts
@@ -416,6 +469,7 @@ func (e *enricherState) createEvent(ed *EnrichedDocument, rec gedcom.GedcomRecor
 		Index:      len(ed.Events),
 		EventType:  eventType,
 		CustomType: customType,
+		EventLabel: EventLabelFor(eventType, customType),
 		DateIndex:  dateIdx,
 		PlaceIndex: placeIdx,
 		Value:      rec.Value,
@@ -428,6 +482,70 @@ func (e *enricherState) createEvent(ed *EnrichedDocument, rec gedcom.GedcomRecor
 
 	ed.Events = append(ed.Events, evt)
 	return evt.Index
+}
+
+func (e *enricherState) extractAssociations(ed *EnrichedDocument) {
+	idx := e.doc.XRefIndex()
+
+	for _, indi := range e.doc.Individuals {
+		if indi.Xref == "" {
+			continue
+		}
+
+		e.extractAssociationRecords(ed, idx, indi, "INDI", "", indi.ChildrenByTag("ASSO"))
+
+		for _, child := range indi.Children {
+			if !individualEventTags[child.Tag] {
+				continue
+			}
+			e.extractAssociationRecords(ed, idx, indi, "INDI", child.Tag, child.ChildrenByTag("ASSO"))
+		}
+	}
+
+	for _, fam := range e.doc.Families {
+		if fam.Xref == "" {
+			continue
+		}
+
+		e.extractAssociationRecords(ed, idx, fam, "FAM", "", fam.ChildrenByTag("ASSO"))
+
+		for _, child := range fam.Children {
+			if !familyEventTags[child.Tag] {
+				continue
+			}
+			e.extractAssociationRecords(ed, idx, fam, "FAM", child.Tag, child.ChildrenByTag("ASSO"))
+		}
+	}
+}
+
+func (e *enricherState) extractAssociationRecords(
+	ed *EnrichedDocument,
+	idx map[string]*gedcom.GedcomRecord,
+	owner gedcom.GedcomRecord,
+	ownerType string,
+	ownerEventType string,
+	assoRecords []gedcom.GedcomRecord,
+) {
+	for _, asso := range assoRecords {
+		target := strings.TrimSpace(asso.Value)
+		if target == "" {
+			continue
+		}
+		// GEDCOM 5.5 association pointers are defined for INDI targets.
+		targetRec := idx[target]
+		if targetRec == nil || targetRec.Tag != "INDI" {
+			continue
+		}
+
+		ed.Associates = append(ed.Associates, AssociateEdge{
+			OwnerXref:      owner.Xref,
+			OwnerType:      ownerType,
+			AssociateXref:  target,
+			Relationship:   strings.TrimSpace(asso.ChildValue("RELA")),
+			SourceTag:      "ASSO",
+			OwnerEventType: ownerEventType,
+		})
+	}
 }
 
 func (e *enricherState) buildRelationshipEdges(ed *EnrichedDocument) {
@@ -468,6 +586,31 @@ func (e *enricherState) buildRelationshipEdges(ed *EnrichedDocument) {
 				BirthOrder: i + 1,
 			})
 
+			childIndi := e.doc.FindByXref(childXref)
+			famcLink := findFamcRecord(childIndi, fam.Xref)
+			noteText := firstInlineNoteUnderRecord(famcLink)
+			bioX, adoptX, fromNote := pedigreedoc.ParseMixedParentageNote(noteText)
+
+			if fromNote && hasHusband && hasWife {
+				hn := pedigreedoc.NormalizeXrefPointer(husbXref)
+				wn := pedigreedoc.NormalizeXrefPointer(wifeXref)
+				valid := (pedigreedoc.XrefEqual(bioX, hn) && pedigreedoc.XrefEqual(adoptX, wn)) ||
+					(pedigreedoc.XrefEqual(bioX, wn) && pedigreedoc.XrefEqual(adoptX, hn))
+				if valid {
+					pedH, rtH := pedigreeAndRelTypeForParent(husbXref, bioX, adoptX)
+					pedW, rtW := pedigreeAndRelTypeForParent(wifeXref, bioX, adoptX)
+					ed.ParentChild = append(ed.ParentChild, ParentChildEdge{
+						ParentXref: husbXref, ChildXref: childXref, FamilyXref: fam.Xref,
+						ParentType: "father", RelationshipType: rtH, Pedigree: pedH,
+					})
+					ed.ParentChild = append(ed.ParentChild, ParentChildEdge{
+						ParentXref: wifeXref, ChildXref: childXref, FamilyXref: fam.Xref,
+						ParentType: "mother", RelationshipType: rtW, Pedigree: pedW,
+					})
+					continue
+				}
+			}
+
 			pedigree := findPedigree(e.doc, childXref, fam.Xref)
 			relType := "biological"
 			if pedigree == "adopted" || pedigree == "foster" || pedigree == "sealing" {
@@ -490,14 +633,90 @@ func (e *enricherState) buildRelationshipEdges(ed *EnrichedDocument) {
 	}
 }
 
+func findFamcRecord(indi *gedcom.GedcomRecord, famXref string) *gedcom.GedcomRecord {
+	if indi == nil {
+		return nil
+	}
+	for i := range indi.Children {
+		ch := &indi.Children[i]
+		if ch.Tag == "FAMC" && pedigreedoc.XrefEqual(ch.Value, famXref) {
+			return ch
+		}
+	}
+	return nil
+}
+
+func firstInlineNoteUnderRecord(rec *gedcom.GedcomRecord) string {
+	if rec == nil {
+		return ""
+	}
+	for i := range rec.Children {
+		c := &rec.Children[i]
+		if c.Tag != "NOTE" {
+			continue
+		}
+		v := strings.TrimSpace(c.Value)
+		if v == "" {
+			continue
+		}
+		if strings.HasPrefix(v, "@") && strings.HasSuffix(v, "@") && len(v) > 2 {
+			continue
+		}
+		return flattenNoteWithCont(*c)
+	}
+	return ""
+}
+
+func flattenNoteWithCont(note gedcom.GedcomRecord) string {
+	var b strings.Builder
+	b.WriteString(note.Value)
+	for _, ch := range note.Children {
+		if ch.Tag == "CONT" {
+			b.WriteByte('\n')
+			b.WriteString(ch.Value)
+		}
+	}
+	return b.String()
+}
+
+func pedigreeAndRelTypeForParent(parentXref, bioXref, adoptXref string) (pedigree string, relType string) {
+	if pedigreedoc.XrefEqual(parentXref, bioXref) {
+		return "birth", "biological"
+	}
+	if pedigreedoc.XrefEqual(parentXref, adoptXref) {
+		return "adopted", "adopted"
+	}
+	return "", "biological"
+}
+
 func findPedigree(doc *gedcom.GedcomDocument, childXref, famXref string) string {
+	if p := findPedigreeFromIndiFamc(doc, childXref, famXref); p != "" {
+		return p
+	}
+	famRec := doc.FindByXref(famXref)
+	if famRec == nil || famRec.Tag != "FAM" {
+		return ""
+	}
+	return findPedigreeFromFamCHIL(famRec, childXref)
+}
+
+func findPedigreeFromIndiFamc(doc *gedcom.GedcomDocument, childXref, famXref string) string {
 	child := doc.FindByXref(childXref)
 	if child == nil {
 		return ""
 	}
 	for _, famc := range child.ChildrenByTag("FAMC") {
-		if famc.Value == famXref {
+		if pedigreedoc.XrefEqual(famc.Value, famXref) {
 			return famc.ChildValue("PEDI")
+		}
+	}
+	return ""
+}
+
+func findPedigreeFromFamCHIL(fam *gedcom.GedcomRecord, childXref string) string {
+	for _, chil := range fam.ChildrenByTag("CHIL") {
+		if pedigreedoc.XrefEqual(chil.Value, childXref) {
+			return chil.ChildValue("PEDI")
 		}
 	}
 	return ""

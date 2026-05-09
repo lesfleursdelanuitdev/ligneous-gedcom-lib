@@ -253,6 +253,7 @@ func TestEnrichFull(t *testing.T) {
 1 BIRT
 2 DATE 1 JAN 1950
 2 PLAC New York, USA
+2 OBJE @M1@
 2 SOUR @S1@
 3 PAGE p. 42
 3 QUAY 3
@@ -446,6 +447,12 @@ func TestEnrichFull(t *testing.T) {
 	if len(ed.IndividualMedia) < 1 {
 		t.Error("expected individual-media links")
 	}
+	if len(ed.EventMedia) < 1 {
+		t.Errorf("expected event-level media (OBJE under BIRT), got %d", len(ed.EventMedia))
+	}
+	if len(ed.EventSources) < 1 {
+		t.Errorf("expected event-level sources (SOUR under BIRT), got %d", len(ed.EventSources))
+	}
 
 	// --- Relationship edges ---
 	if len(ed.Spouses) != 2 {
@@ -516,6 +523,166 @@ func TestEnrichNestedNotes(t *testing.T) {
 	// Source @S1@ has an inline note nested under DATA.
 	if len(ed.SourceNotes) != 1 {
 		t.Errorf("expected 1 source-note link, got %d", len(ed.SourceNotes))
+	}
+}
+
+func TestEnrichMixedParentageFamcNote(t *testing.T) {
+	input := `0 HEAD
+1 GEDC
+2 VERS 5.5
+0 @I1@ INDI
+1 NAME Father /Bio/
+0 @I2@ INDI
+1 NAME Mother /Adopt/
+0 @I3@ INDI
+1 NAME Child /Kid/
+1 FAMC @F1@
+2 PEDI birth
+2 NOTE Ligneous mixed parentage: biological=@I1@; adoptive=@I2@
+0 @F1@ FAM
+1 HUSB @I1@
+1 WIFE @I2@
+1 CHIL @I3@
+0 TRLR
+`
+	doc, _, err := parser.Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	ed := Enrich(doc)
+	if len(ed.ParentChild) != 2 {
+		t.Fatalf("parent_child=%d want 2", len(ed.ParentChild))
+	}
+	var father, mother *ParentChildEdge
+	for i := range ed.ParentChild {
+		pc := &ed.ParentChild[i]
+		switch pc.ParentType {
+		case "father":
+			father = pc
+		case "mother":
+			mother = pc
+		}
+	}
+	if father == nil || mother == nil {
+		t.Fatal("missing father or mother edge")
+	}
+	if father.RelationshipType != "biological" || father.Pedigree != "birth" {
+		t.Errorf("father: rel=%q ped=%q", father.RelationshipType, father.Pedigree)
+	}
+	if mother.RelationshipType != "adopted" || mother.Pedigree != "adopted" {
+		t.Errorf("mother: rel=%q ped=%q", mother.RelationshipType, mother.Pedigree)
+	}
+}
+
+func TestEnrichGEDCOM55EventWhitelist(t *testing.T) {
+	// GEDCOM 5.5: sample INDIVIDUAL_ATTRIBUTE_STRUCTURE (FACT), LDS (BAPL),
+	// FAMILY_EVENT_STRUCTURE (CENS, RESI), and LDS_SPOUSE_SEALING (SLGS).
+	input := `0 HEAD
+1 GEDC
+2 VERS 5.5
+0 @I1@ INDI
+1 NAME John /Doe/
+1 BIRT
+2 DATE 1 JAN 1950
+1 FACT
+2 TYPE Military service
+2 DATE 1 JUN 1941
+1 BAPL
+2 DATE 2 JUN 1955
+2 TEMP LOGAN
+1 FAMS @F1@
+0 @I2@ INDI
+1 NAME Jane /Doe/
+1 FAMS @F1@
+0 @F1@ FAM
+1 HUSB @I1@
+1 WIFE @I2@
+1 CENS
+2 DATE 1880
+1 RESI
+2 PLAC Salt Lake City, Utah, USA
+1 SLGS
+2 DATE 3 JUL 1960
+0 TRLR
+`
+	doc, _, err := parser.Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	ed := Enrich(doc)
+
+	if len(ed.Events) != 6 {
+		t.Fatalf("expected 6 events (BIRT+FACT+BAPL + CENS+RESI+SLGS), got %d", len(ed.Events))
+	}
+	if len(ed.IndividualEvents) != 3 {
+		t.Errorf("expected 3 individual-event links, got %d", len(ed.IndividualEvents))
+	}
+	if len(ed.FamilyEvents) != 3 {
+		t.Errorf("expected 3 family-event links, got %d", len(ed.FamilyEvents))
+	}
+
+	wantTypes := map[string]bool{
+		"BIRT": true, "FACT": true, "BAPL": true,
+		"CENS": true, "RESI": true, "SLGS": true,
+	}
+	for _, evt := range ed.Events {
+		if !wantTypes[evt.EventType] {
+			t.Errorf("unexpected event type %q", evt.EventType)
+		}
+		delete(wantTypes, evt.EventType)
+	}
+	if len(wantTypes) != 0 {
+		t.Errorf("missing event types: %v", wantTypes)
+	}
+}
+
+func TestEnrichAssociations(t *testing.T) {
+	input := `0 HEAD
+1 GEDC
+2 VERS 5.5
+0 @I1@ INDI
+1 NAME John /Doe/
+1 ASSO @I2@
+2 RELA Godfather
+1 BIRT
+2 DATE 1 JAN 1900
+2 ASSO @I3@
+3 RELA Witness
+0 @I2@ INDI
+1 NAME Jane /Smith/
+0 @I3@ INDI
+1 NAME Witness /Person/
+0 @F1@ FAM
+1 HUSB @I1@
+1 ASSO @I2@
+2 RELA Neighbor
+0 TRLR
+`
+	doc, _, err := parser.Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	ed := Enrich(doc)
+	if len(ed.Associates) != 3 {
+		t.Fatalf("expected 3 associates, got %d", len(ed.Associates))
+	}
+
+	var foundIndividual, foundEvent, foundFamily bool
+	for _, asso := range ed.Associates {
+		if asso.OwnerXref == "@I1@" && asso.OwnerType == "INDI" && asso.OwnerEventType == "" && asso.AssociateXref == "@I2@" && asso.Relationship == "Godfather" {
+			foundIndividual = true
+		}
+		if asso.OwnerXref == "@I1@" && asso.OwnerType == "INDI" && asso.OwnerEventType == "BIRT" && asso.AssociateXref == "@I3@" && asso.Relationship == "Witness" {
+			foundEvent = true
+		}
+		if asso.OwnerXref == "@F1@" && asso.OwnerType == "FAM" && asso.OwnerEventType == "" && asso.AssociateXref == "@I2@" && asso.Relationship == "Neighbor" {
+			foundFamily = true
+		}
+	}
+	if !foundIndividual || !foundEvent || !foundFamily {
+		t.Fatalf("missing expected association edges: individual=%v event=%v family=%v", foundIndividual, foundEvent, foundFamily)
 	}
 }
 

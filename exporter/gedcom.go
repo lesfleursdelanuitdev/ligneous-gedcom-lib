@@ -71,9 +71,15 @@ func writeRecordRecursive(b *strings.Builder, rec gedcom.GedcomRecord) {
 
 func writeLine(b *strings.Builder, rec gedcom.GedcomRecord) {
 	fmt.Fprintf(b, "%d", rec.Level)
-	if rec.Xref != "" {
+	xrefOut := rec.Xref
+	if rec.Level == 0 && xrefOut != "" {
+		// Level-0 structural records (INDI, FAM, NOTE, OBJE, …) must use GEDCOM
+		// pointer form "@…@". Payloads sometimes store "N1" or "I1" without delimiters.
+		xrefOut = ensureXrefPointer(xrefOut)
+	}
+	if xrefOut != "" {
 		b.WriteByte(' ')
-		b.WriteString(rec.Xref)
+		b.WriteString(xrefOut)
 	}
 	b.WriteByte(' ')
 	b.WriteString(rec.Tag)

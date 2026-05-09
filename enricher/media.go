@@ -6,6 +6,41 @@ import (
 	"github.com/lesfleursdelanuitdev/ligneous-gedcom-lib/gedcom"
 )
 
+// collectMediaInlineNotes concatenates inline NOTE structures under an OBJE (or inline OBJE block).
+// NOTE lines that are only xref pointers (@N1@) are skipped — those belong in note-link flows, not description.
+func collectMediaInlineNotes(rec gedcom.GedcomRecord) string {
+	var parts []string
+	for _, n := range rec.ChildrenByTag("NOTE") {
+		v := strings.TrimSpace(n.Value)
+		if v != "" && strings.HasPrefix(v, "@") && strings.HasSuffix(v, "@") {
+			continue
+		}
+		if t := noteRecordInlineText(n); t != "" {
+			parts = append(parts, t)
+		}
+	}
+	return strings.TrimSpace(strings.Join(parts, "\n\n"))
+}
+
+func noteRecordInlineText(noteRec gedcom.GedcomRecord) string {
+	var b strings.Builder
+	if noteRec.Value != "" {
+		b.WriteString(noteRec.Value)
+	}
+	for _, ch := range noteRec.Children {
+		switch ch.Tag {
+		case "CONT":
+			if b.Len() > 0 {
+				b.WriteByte('\n')
+			}
+			b.WriteString(ch.Value)
+		case "CONC":
+			b.WriteString(ch.Value)
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
 // extractMedia processes top-level OBJE records and media references from
 // individuals, families, and sources.
 func (e *enricherState) extractMedia(ed *EnrichedDocument) {
@@ -20,10 +55,11 @@ func (e *enricherState) extractMedia(ed *EnrichedDocument) {
 
 		idx := len(ed.Media)
 		ed.Media = append(ed.Media, EnrichedMedia{
-			Xref:  mediaRec.Xref,
-			File:  file,
-			Form:  form,
-			Title: mediaRec.ChildValue("TITL"),
+			Xref:        mediaRec.Xref,
+			File:        file,
+			Form:        form,
+			Title:       mediaRec.ChildValue("TITL"),
+			Description: collectMediaInlineNotes(mediaRec),
 		})
 		if mediaRec.Xref != "" {
 			e.mediaXrefIndex[mediaRec.Xref] = idx
@@ -69,6 +105,21 @@ func (e *enricherState) extractMedia(ed *EnrichedDocument) {
 			})
 		})
 	}
+
+	// Phase 5: Media references on events (INDI and FAM)
+	for i := range ed.Events {
+		evt := &ed.Events[i]
+		rec := e.findEventRecord(*evt)
+		if rec == nil {
+			continue
+		}
+		e.extractRecordMedia(ed, *rec, func(mediaIdx int) {
+			ed.EventMedia = append(ed.EventMedia, EventMediaLink{
+				EventIndex: evt.Index,
+				MediaIndex: mediaIdx,
+			})
+		})
+	}
 }
 
 // extractRecordMedia finds OBJE sub-tags on a record.
@@ -106,9 +157,10 @@ func (e *enricherState) resolveOrCreateMedia(ed *EnrichedDocument, objeRec gedco
 
 	idx := len(ed.Media)
 	ed.Media = append(ed.Media, EnrichedMedia{
-		File:  file,
-		Form:  form,
-		Title: objeRec.ChildValue("TITL"),
+		File:        file,
+		Form:        form,
+		Title:       objeRec.ChildValue("TITL"),
+		Description: collectMediaInlineNotes(objeRec),
 	})
 	return idx
 }

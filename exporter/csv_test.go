@@ -148,13 +148,13 @@ func TestToCSV_RealFiles(t *testing.T) {
 			}
 
 			lines := strings.Split(strings.TrimSpace(csvStr), "\n")
-			expectedRows := doc.IndividualCount() + 1 // +1 for header
+			expectedRows := doc.IndividualCount() + len(doc.Media) + 1 // +1 for header
 			if len(lines) != expectedRows {
 				t.Errorf("expected %d CSV rows, got %d", expectedRows, len(lines))
 			}
 
-			t.Logf("%s: %d CSV rows (header + %d individuals)",
-				name, len(lines), doc.IndividualCount())
+			t.Logf("%s: %d CSV rows (header + %d individuals + %d media)",
+				name, len(lines), doc.IndividualCount(), len(doc.Media))
 		})
 	}
 }

@@ -18,6 +18,7 @@ func ToJSON(doc *gedcom.GedcomDocument) *DenormalizedJSON {
 		File: FileMetadata{
 			IndividualsCount: len(doc.Individuals),
 			FamiliesCount:    len(doc.Families),
+			MediaCount:       len(doc.Media),
 		},
 		Notes:   make(map[string]DenormalizedNote),
 		Sources: make(map[string]DenormalizedSource),
@@ -55,7 +56,35 @@ func ToJSON(doc *gedcom.GedcomDocument) *DenormalizedJSON {
 		result.Families = append(result.Families, convertFamily(famRec, idx))
 	}
 
+	for _, obje := range doc.Media {
+		result.Media = append(result.Media, convertMediaRecord(obje))
+	}
+
 	return result
+}
+
+func convertMediaRecord(obje gedcom.GedcomRecord) DenormalizedMedia {
+	out := DenormalizedMedia{Xref: obje.Xref}
+	if fr := obje.FirstChildByTag("FILE"); fr != nil {
+		out.File = fr.Value
+		out.Form = fr.ChildValue("FORM")
+	}
+	out.Title = obje.ChildValue("TITL")
+	out.Description = collectOBJEInlineNoteText(obje)
+	return out
+}
+
+// collectOBJEInlineNoteText returns concatenated inline NOTE bodies under an OBJE (skips NOTE @xref@ pointers).
+func collectOBJEInlineNoteText(obje gedcom.GedcomRecord) string {
+	var parts []string
+	for _, n := range obje.ChildrenByTag("NOTE") {
+		v := strings.TrimSpace(n.Value)
+		if v != "" && strings.HasPrefix(v, "@") && strings.HasSuffix(v, "@") {
+			continue
+		}
+		parts = append(parts, extractNoteContent(n))
+	}
+	return strings.TrimSpace(strings.Join(parts, "\n\n"))
 }
 
 // WriteJSON writes DenormalizedJSON to a writer.
@@ -74,6 +103,7 @@ func convertIndividual(rec gedcom.GedcomRecord, idx map[string]*gedcom.GedcomRec
 		Parents:    []DenormalizedRelationship{},
 		Spouses:    []DenormalizedRelationship{},
 		Children:   []DenormalizedRelationship{},
+		Associates: []DenormalizedRelationship{},
 		Events:     []DenormalizedEvent{},
 		Notes:      []DenormalizedNoteRef{},
 		Sources:    []DenormalizedSourceRef{},
@@ -131,6 +161,17 @@ func convertIndividual(rec gedcom.GedcomRecord, idx map[string]*gedcom.GedcomRec
 		}
 	}
 
+	// Extract ASSO/RELA associations
+	for _, asso := range rec.ChildrenByTag("ASSO") {
+		if asso.Value != "" {
+			indi.Associates = append(indi.Associates, DenormalizedRelationship{
+				Xref:         asso.Value,
+				Name:         resolveIndiName(asso.Value, idx),
+				Relationship: asso.ChildValue("RELA"),
+			})
+		}
+	}
+
 	// Recursively extract NOTE references, skipping event sub-trees
 	indi.Notes = collectNoteRefs(rec, individualEventTags)
 
@@ -148,6 +189,7 @@ func convertFamily(rec gedcom.GedcomRecord, idx map[string]*gedcom.GedcomRecord)
 	fam := DenormalizedFamily{
 		Xref:     rec.Xref,
 		Children: []DenormalizedRelationship{},
+		Associates: []DenormalizedRelationship{},
 		Events:   []DenormalizedEvent{},
 		Notes:    []DenormalizedNoteRef{},
 		Sources:  []DenormalizedSourceRef{},
@@ -177,6 +219,17 @@ func convertFamily(rec gedcom.GedcomRecord, idx map[string]*gedcom.GedcomRecord)
 			fam.Children = append(fam.Children, DenormalizedRelationship{
 				Xref: chil.Value,
 				Name: resolveIndiName(chil.Value, idx),
+			})
+		}
+	}
+
+	// Extract ASSO/RELA associations
+	for _, asso := range rec.ChildrenByTag("ASSO") {
+		if asso.Value != "" {
+			fam.Associates = append(fam.Associates, DenormalizedRelationship{
+				Xref:         asso.Value,
+				Name:         resolveIndiName(asso.Value, idx),
+				Relationship: asso.ChildValue("RELA"),
 			})
 		}
 	}
@@ -258,11 +311,17 @@ func resolveIndiName(xref string, idx map[string]*gedcom.GedcomRecord) string {
 
 func isEventTag(tag string) bool {
 	switch tag {
+	// INDI: INDIVIDUAL_EVENT_STRUCTURE, INDIVIDUAL_ATTRIBUTE_STRUCTURE, LDS ordinances
 	case "BIRT", "CHR", "DEAT", "BURI", "CREM", "ADOP", "BAPM",
 		"BARM", "BASM", "BLES", "CHRA", "CONF", "FCOM", "ORDN",
 		"NATU", "EMIG", "IMMI", "CENS", "PROB", "WILL", "GRAD",
-		"RETI", "EVEN", "MARR", "ANUL", "DIV", "DIVF", "ENGA",
-		"MARB", "MARC", "MARL", "MARS", "RESI":
+		"RETI", "EVEN",
+		"CAST", "DSCR", "EDUC", "IDNO", "NATI", "NCHI", "NMR", "OCCU",
+		"PROP", "RELI", "RESI", "SSN", "TITL", "FACT",
+		"BAPL", "CONL", "ENDL", "SLGC",
+		// FAM: FAMILY_EVENT_STRUCTURE + LDS spouse sealing
+		"MARR", "ANUL", "DIV", "DIVF", "ENGA",
+		"MARB", "MARC", "MARL", "MARS", "SLGS":
 		return true
 	}
 	return false
@@ -289,12 +348,18 @@ var individualEventTags = map[string]bool{
 	"ADOP": true, "BAPM": true, "BARM": true, "BASM": true, "BLES": true,
 	"CHRA": true, "CONF": true, "FCOM": true, "ORDN": true, "NATU": true,
 	"EMIG": true, "IMMI": true, "CENS": true, "PROB": true, "WILL": true,
-	"GRAD": true, "RETI": true, "EVEN": true, "RESI": true,
+	"GRAD": true, "RETI": true, "EVEN": true,
+	"CAST": true, "DSCR": true, "EDUC": true, "IDNO": true, "NATI": true,
+	"NCHI": true, "NMR": true, "OCCU": true, "PROP": true, "RELI": true,
+	"RESI": true, "SSN": true, "TITL": true, "FACT": true,
+	"BAPL": true, "CONL": true, "ENDL": true, "SLGC": true,
 }
 
 var familyEventTags = map[string]bool{
 	"MARR": true, "ANUL": true, "DIV": true, "DIVF": true, "ENGA": true,
-	"MARB": true, "MARC": true, "MARL": true, "MARS": true, "EVEN": true,
+	"MARB": true, "MARC": true, "MARL": true, "MARS": true, "CENS": true,
+	"RESI": true, "EVEN": true,
+	"SLGS": true,
 }
 
 // collectNoteRefs recursively finds all NOTE references in a record's subtree.

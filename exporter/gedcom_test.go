@@ -6,8 +6,40 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lesfleursdelanuitdev/ligneous-gedcom-lib/gedcom"
 	"github.com/lesfleursdelanuitdev/ligneous-gedcom-lib/parser"
 )
+
+// Example: DB / JSON may store a note xref as "N1" instead of "@N1@". GEDCOM requires
+// `0 @N1@ NOTE …`, not `0 N1 NOTE …` (which parsers treat as xref "N1" missing @ delimiters).
+func TestToGEDCOM_NormalizesLevel0XrefDelimiters(t *testing.T) {
+	doc := &gedcom.GedcomDocument{
+		Header: gedcom.GedcomRecord{Level: 0, Tag: "HEAD"},
+		Individuals: []gedcom.GedcomRecord{
+			{Level: 0, Tag: "INDI", Xref: "I1"},
+		},
+		Notes: []gedcom.GedcomRecord{
+			{Level: 0, Tag: "NOTE", Xref: "N1", Value: "Norman Peter Gonsalves passed away in 2022."},
+		},
+		Media: []gedcom.GedcomRecord{
+			{Level: 0, Tag: "OBJE", Xref: "M15"},
+		},
+		Trailer: gedcom.GedcomRecord{Level: 0, Tag: "TRLR"},
+	}
+	out := ToGEDCOM(doc)
+	if strings.Contains(out, "0 N1 NOTE ") {
+		t.Errorf("bare N1 must not appear as level-0 xref; got:\n%s", out)
+	}
+	if !strings.Contains(out, "0 @N1@ NOTE Norman Peter Gonsalves passed away in 2022.") {
+		t.Errorf("expected 0 @N1@ NOTE …; got:\n%s", out)
+	}
+	if !strings.Contains(out, "0 @I1@ INDI") {
+		t.Errorf("expected 0 @I1@ INDI; got:\n%s", out)
+	}
+	if !strings.Contains(out, "0 @M15@ OBJE") {
+		t.Errorf("expected 0 @M15@ OBJE; got:\n%s", out)
+	}
+}
 
 func TestToGEDCOM_Minimal(t *testing.T) {
 	input := `0 HEAD

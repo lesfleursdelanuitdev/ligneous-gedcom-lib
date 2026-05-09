@@ -3,17 +3,28 @@ package exporter
 // DenormalizedJSON is the API-friendly flattened representation of GEDCOM data.
 // Names are resolved, events are inline, and relationships include names (not just xrefs).
 type DenormalizedJSON struct {
-	File        FileMetadata              `json:"file"`
-	Individuals []DenormalizedIndividual  `json:"individuals"`
-	Families    []DenormalizedFamily      `json:"families"`
+	File        FileMetadata                  `json:"file"`
+	Individuals []DenormalizedIndividual      `json:"individuals"`
+	Families    []DenormalizedFamily          `json:"families"`
+	Media       []DenormalizedMedia           `json:"media,omitempty"`
 	Notes       map[string]DenormalizedNote   `json:"notes"`
 	Sources     map[string]DenormalizedSource `json:"sources"`
+}
+
+// DenormalizedMedia is a top-level OBJE (multimedia record).
+type DenormalizedMedia struct {
+	Xref        string `json:"xref,omitempty"`
+	File        string `json:"file,omitempty"`
+	Form        string `json:"form,omitempty"`
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"` // inline NOTE text under OBJE
 }
 
 // FileMetadata contains document-level information.
 type FileMetadata struct {
 	IndividualsCount int `json:"individuals_count"`
 	FamiliesCount    int `json:"families_count"`
+	MediaCount       int `json:"media_count,omitempty"`
 }
 
 // DenormalizedIndividual represents a person with resolved fields.
@@ -28,6 +39,7 @@ type DenormalizedIndividual struct {
 	Parents    []DenormalizedRelationship `json:"parents"`
 	Spouses    []DenormalizedRelationship `json:"spouses"`
 	Children   []DenormalizedRelationship `json:"children"`
+	Associates []DenormalizedRelationship `json:"associates"`
 	Events     []DenormalizedEvent        `json:"events"`
 	Notes      []DenormalizedNoteRef      `json:"notes"`
 	Sources    []DenormalizedSourceRef    `json:"sources"`
@@ -39,6 +51,7 @@ type DenormalizedFamily struct {
 	Husband  *DenormalizedRelationship  `json:"husband,omitempty"`
 	Wife     *DenormalizedRelationship  `json:"wife,omitempty"`
 	Children []DenormalizedRelationship `json:"children"`
+	Associates []DenormalizedRelationship `json:"associates"`
 	Marriage *DenormalizedEvent         `json:"marriage,omitempty"`
 	Divorce  *DenormalizedEvent         `json:"divorce,omitempty"`
 	Events   []DenormalizedEvent        `json:"events"`
