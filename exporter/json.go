@@ -172,8 +172,8 @@ func convertIndividual(rec gedcom.GedcomRecord, idx map[string]*gedcom.GedcomRec
 		}
 	}
 
-	// Recursively extract NOTE references, skipping event sub-trees
-	indi.Notes = collectNoteRefs(rec, individualEventTags)
+	// Recursively extract NOTE references, skipping event/attribute sub-trees
+	indi.Notes = collectNoteRefs(rec, individualSkipTags)
 
 	// Extract SOUR references
 	for _, sour := range rec.ChildrenByTag("SOUR") {
@@ -247,8 +247,8 @@ func convertFamily(rec gedcom.GedcomRecord, idx map[string]*gedcom.GedcomRecord)
 		}
 	}
 
-	// Recursively extract NOTE references, skipping event sub-trees
-	fam.Notes = collectNoteRefs(rec, familyEventTags)
+	// Recursively extract NOTE references, skipping event/attribute sub-trees
+	fam.Notes = collectNoteRefs(rec, familySkipTags)
 
 	// Extract SOUR references
 	for _, sour := range rec.ChildrenByTag("SOUR") {
@@ -311,14 +311,15 @@ func resolveIndiName(xref string, idx map[string]*gedcom.GedcomRecord) string {
 
 func isEventTag(tag string) bool {
 	switch tag {
-	// INDI: INDIVIDUAL_EVENT_STRUCTURE, INDIVIDUAL_ATTRIBUTE_STRUCTURE, LDS ordinances
+	// INDI events + LDS ordinances
 	case "BIRT", "CHR", "DEAT", "BURI", "CREM", "ADOP", "BAPM",
 		"BARM", "BASM", "BLES", "CHRA", "CONF", "FCOM", "ORDN",
 		"NATU", "EMIG", "IMMI", "CENS", "PROB", "WILL", "GRAD",
 		"RETI", "EVEN",
-		"CAST", "DSCR", "EDUC", "IDNO", "NATI", "NCHI", "NMR", "OCCU",
-		"PROP", "RELI", "RESI", "SSN", "TITL", "FACT",
 		"BAPL", "CONL", "ENDL", "SLGC",
+		// INDI attributes
+		"CAST", "DSCR", "EDUC", "IDNO", "NATI", "NMR", "OCCU",
+		"PROP", "RELI", "RESI", "SSN", "TITL", "FACT",
 		// FAM: FAMILY_EVENT_STRUCTURE + LDS spouse sealing
 		"MARR", "ANUL", "DIV", "DIVF", "ENGA",
 		"MARB", "MARC", "MARL", "MARS", "SLGS":
@@ -341,26 +342,56 @@ func parseYear(dateStr string) int {
 	return 0
 }
 
-// Event tag sets mirror the enricher's definitions so that note extraction
-// for individuals/families correctly skips event sub-trees (handled separately).
+// Event/attribute tag sets mirror the enricher's definitions so that note
+// extraction for individuals/families correctly skips these sub-trees.
 var individualEventTags = map[string]bool{
 	"BIRT": true, "CHR": true, "DEAT": true, "BURI": true, "CREM": true,
 	"ADOP": true, "BAPM": true, "BARM": true, "BASM": true, "BLES": true,
 	"CHRA": true, "CONF": true, "FCOM": true, "ORDN": true, "NATU": true,
 	"EMIG": true, "IMMI": true, "CENS": true, "PROB": true, "WILL": true,
 	"GRAD": true, "RETI": true, "EVEN": true,
-	"CAST": true, "DSCR": true, "EDUC": true, "IDNO": true, "NATI": true,
-	"NCHI": true, "NMR": true, "OCCU": true, "PROP": true, "RELI": true,
-	"RESI": true, "SSN": true, "TITL": true, "FACT": true,
 	"BAPL": true, "CONL": true, "ENDL": true, "SLGC": true,
+}
+
+var individualAttributeTags = map[string]bool{
+	"CAST": true, "DSCR": true, "EDUC": true, "IDNO": true, "NATI": true,
+	"NMR": true, "OCCU": true, "PROP": true, "RELI": true,
+	"RESI": true, "SSN": true, "TITL": true, "FACT": true,
 }
 
 var familyEventTags = map[string]bool{
 	"MARR": true, "ANUL": true, "DIV": true, "DIVF": true, "ENGA": true,
 	"MARB": true, "MARC": true, "MARL": true, "MARS": true, "CENS": true,
-	"RESI": true, "EVEN": true,
-	"SLGS": true,
+	"EVEN": true, "SLGS": true,
 }
+
+var familyAttributeTags = map[string]bool{
+	"FACT": true, "RESI": true,
+}
+
+// Combined skip sets used by collectNoteRefs to avoid attributing notes from
+// event/attribute sub-trees to their parent INDI/FAM record.
+var individualSkipTags = func() map[string]bool {
+	m := make(map[string]bool)
+	for k := range individualEventTags {
+		m[k] = true
+	}
+	for k := range individualAttributeTags {
+		m[k] = true
+	}
+	return m
+}()
+
+var familySkipTags = func() map[string]bool {
+	m := make(map[string]bool)
+	for k := range familyEventTags {
+		m[k] = true
+	}
+	for k := range familyAttributeTags {
+		m[k] = true
+	}
+	return m
+}()
 
 // collectNoteRefs recursively finds all NOTE references in a record's subtree.
 // skipTags prevents recursion into certain child tags (e.g. event tags that

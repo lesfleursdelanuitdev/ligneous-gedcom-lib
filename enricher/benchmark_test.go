@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/lesfleursdelanuitdev/ligneous-gedcom-lib/parser"
-	"github.com/lesfleursdelanuitdev/ligneous-gedcom-lib/validator"
 )
 
 type testFile struct {
@@ -46,41 +45,6 @@ func BenchmarkParseOnly(b *testing.B) {
 				if err != nil {
 					b.Fatal(err)
 				}
-			}
-		})
-	}
-}
-
-func BenchmarkParseAndValidate(b *testing.B) {
-	files := loadTestFiles(b)
-	for _, tf := range files {
-		b.Run(tf.name, func(b *testing.B) {
-			b.ReportAllocs()
-			b.SetBytes(int64(len(tf.data)))
-			for i := 0; i < b.N; i++ {
-				doc, _, err := parser.Parse(bytes.NewReader(tf.data))
-				if err != nil {
-					b.Fatal(err)
-				}
-				validator.Validate(doc)
-			}
-		})
-	}
-}
-
-func BenchmarkParseValidateEnrich(b *testing.B) {
-	files := loadTestFiles(b)
-	for _, tf := range files {
-		b.Run(tf.name, func(b *testing.B) {
-			b.ReportAllocs()
-			b.SetBytes(int64(len(tf.data)))
-			for i := 0; i < b.N; i++ {
-				doc, _, err := parser.Parse(bytes.NewReader(tf.data))
-				if err != nil {
-					b.Fatal(err)
-				}
-				validator.Validate(doc)
-				Enrich(doc)
 			}
 		})
 	}

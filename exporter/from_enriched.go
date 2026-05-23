@@ -1,6 +1,7 @@
 package exporter
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
@@ -45,6 +46,10 @@ func FromEnriched(ed *enricher.EnrichedDocument) *gedcom.GedcomDocument {
 
 	indiEvents := groupEventsByOwner(ed, "INDI")
 	famEvents := groupEventsByOwner(ed, "FAM")
+	indiAttrs := groupAttributesByOwner(ed, "INDI")
+	famAttrs := groupAttributesByOwner(ed, "FAM")
+	indiResidences := groupResidencesByOwner(ed, "INDI")
+	famResidences := groupResidencesByOwner(ed, "FAM")
 	indiNotes := groupIndividualNotes(ed)
 	famNotes := groupFamilyNotes(ed)
 	eventNotes := groupEventNotes(ed)
@@ -64,6 +69,7 @@ func FromEnriched(ed *enricher.EnrichedDocument) *gedcom.GedcomDocument {
 
 	for _, indi := range ed.Individuals {
 		rec := buildIndividualRecord(ed, indi, indiEvents[indi.Xref],
+			indiAttrs[indi.Xref], indiResidences[indi.Xref],
 			indiNotes[indi.Xref], indiSources[indi.Xref],
 			parentChild[indi.Xref], spousesByIndi[indi.Xref], eventNotes,
 			indiMedia[indi.Xref], eventSources, eventMedia,
@@ -73,6 +79,7 @@ func FromEnriched(ed *enricher.EnrichedDocument) *gedcom.GedcomDocument {
 
 	for _, fam := range ed.Families {
 		rec := buildFamilyRecord(ed, fam, famEvents[fam.Xref],
+			famAttrs[fam.Xref], famResidences[fam.Xref],
 			famNotes[fam.Xref], famSources[fam.Xref],
 			famChildren[fam.Xref], eventNotes,
 			famMedia[fam.Xref], famSurnames[fam.Xref], eventSources, eventMedia,
@@ -121,6 +128,8 @@ func buildIndividualRecord(
 	ed *enricher.EnrichedDocument,
 	indi enricher.EnrichedIndividual,
 	events []enricher.Event,
+	attrs []enricher.Attribute,
+	residences []enricher.Residence,
 	noteLinks []enricher.IndividualNoteLink,
 	sourceLinks []enricher.IndividualSourceLink,
 	parentLinks []enricher.ParentChildEdge,
@@ -149,8 +158,12 @@ func buildIndividualRecord(
 		evtRec := buildEventRecord(ed, evt, 1, eventNotes, eventSources[evt.Index], eventMedia[evt.Index], eventAssociates)
 		rec.AddChild(evtRec)
 	}
-
-	appendIndividualScalarAttributes(&rec, indi, events)
+	for _, attr := range attrs {
+		rec.AddChild(buildAttributeRecord(ed, attr, 1))
+	}
+	for _, res := range residences {
+		rec.AddChild(buildResidenceRecord(ed, res, 1))
+	}
 
 	byFam := make(map[string][]enricher.ParentChildEdge)
 	for _, pc := range parentLinks {
@@ -377,6 +390,8 @@ func buildFamilyRecord(
 	ed *enricher.EnrichedDocument,
 	fam enricher.EnrichedFamily,
 	events []enricher.Event,
+	attrs []enricher.Attribute,
+	residences []enricher.Residence,
 	noteLinks []enricher.FamilyNoteLink,
 	sourceLinks []enricher.FamilySourceLink,
 	children []enricher.FamilyChildEdge,
@@ -401,11 +416,22 @@ func buildFamilyRecord(
 		rec.AddChild(gedcom.GedcomRecord{Level: 1, Tag: "CHIL", Value: ensureXrefPointer(child.ChildXref)})
 	}
 
+	// Emit NCHI from the computed children count.
+	if fam.ChildrenCount > 0 {
+		rec.AddChild(gedcom.GedcomRecord{Level: 1, Tag: "NCHI", Value: fmt.Sprintf("%d", fam.ChildrenCount)})
+	}
+
 	appendFamilySurnameNote(&rec, ed, surnameLinks)
 
 	for _, evt := range events {
 		evtRec := buildEventRecord(ed, evt, 1, eventNotes, eventSources[evt.Index], eventMedia[evt.Index], eventAssociates)
 		rec.AddChild(evtRec)
+	}
+	for _, attr := range attrs {
+		rec.AddChild(buildAttributeRecord(ed, attr, 1))
+	}
+	for _, res := range residences {
+		rec.AddChild(buildResidenceRecord(ed, res, 1))
 	}
 
 	for _, nl := range noteLinks {
@@ -755,42 +781,81 @@ func appendFamilySurnameNote(rec *gedcom.GedcomRecord, ed *enricher.EnrichedDocu
 	rec.AddChild(gedcom.GedcomRecord{Level: 1, Tag: "NOTE", Value: "Family surname(s): " + strings.Join(parts, ", ")})
 }
 
-func eventAttributeValues(events []enricher.Event, tag string) map[string]bool {
-	m := make(map[string]bool)
-	for _, e := range events {
-		if e.EventType == tag {
-			if v := strings.TrimSpace(e.Value); v != "" {
-				m[v] = true
-			}
+func buildAttributeRecord(ed *enricher.EnrichedDocument, attr enricher.Attribute, level int) gedcom.GedcomRecord {
+	rec := gedcom.GedcomRecord{Level: level, Tag: attr.AttributeType, Value: attr.Value}
+	if attr.CustomType != "" {
+		rec.AddChild(gedcom.GedcomRecord{Level: level + 1, Tag: "TYPE", Value: attr.CustomType})
+	}
+	if attr.DateIndex >= 0 && attr.DateIndex < len(ed.Dates) {
+		if ds := enricher.FormatGEDCOMDate(ed.Dates[attr.DateIndex]); ds != "" {
+			rec.AddChild(gedcom.GedcomRecord{Level: level + 1, Tag: "DATE", Value: ds})
 		}
+	}
+	if attr.PlaceIndex >= 0 && attr.PlaceIndex < len(ed.Places) {
+		if p := strings.TrimSpace(ed.Places[attr.PlaceIndex].Original); p != "" {
+			rec.AddChild(gedcom.GedcomRecord{Level: level + 1, Tag: "PLAC", Value: p})
+		}
+	}
+	if attr.Agency != "" {
+		rec.AddChild(gedcom.GedcomRecord{Level: level + 1, Tag: "AGNC", Value: attr.Agency})
+	}
+	return rec
+}
+
+func buildResidenceRecord(ed *enricher.EnrichedDocument, res enricher.Residence, level int) gedcom.GedcomRecord {
+	rec := gedcom.GedcomRecord{Level: level, Tag: "RESI"}
+	if res.DateIndex >= 0 && res.DateIndex < len(ed.Dates) {
+		if ds := enricher.FormatGEDCOMDate(ed.Dates[res.DateIndex]); ds != "" {
+			rec.AddChild(gedcom.GedcomRecord{Level: level + 1, Tag: "DATE", Value: ds})
+		}
+	}
+	if res.PlaceIndex >= 0 && res.PlaceIndex < len(ed.Places) {
+		if p := strings.TrimSpace(ed.Places[res.PlaceIndex].Original); p != "" {
+			rec.AddChild(gedcom.GedcomRecord{Level: level + 1, Tag: "PLAC", Value: p})
+		}
+	}
+	if res.Address != "" {
+		addrRec := gedcom.GedcomRecord{Level: level + 1, Tag: "ADDR"}
+		addrRec.AddChild(gedcom.GedcomRecord{Level: level + 2, Tag: "ADR1", Value: res.Address})
+		rec.AddChild(addrRec)
+	}
+	return rec
+}
+
+func groupAttributesByOwner(ed *enricher.EnrichedDocument, ownerType string) map[string][]enricher.Attribute {
+	m := make(map[string][]enricher.Attribute)
+	for _, a := range ed.Attributes {
+		if a.OwnerType == ownerType {
+			m[a.OwnerXref] = append(m[a.OwnerXref], a)
+		}
+	}
+	for k := range m {
+		sort.Slice(m[k], func(i, j int) bool {
+			if m[k][i].SortOrder != m[k][j].SortOrder {
+				return m[k][i].SortOrder < m[k][j].SortOrder
+			}
+			return m[k][i].Index < m[k][j].Index
+		})
 	}
 	return m
 }
 
-func appendIndividualScalarAttributes(rec *gedcom.GedcomRecord, indi enricher.EnrichedIndividual, events []enricher.Event) {
-	occSeen := eventAttributeValues(events, "OCCU")
-	natiSeen := eventAttributeValues(events, "NATI")
-	reliSeen := eventAttributeValues(events, "RELI")
-
-	for _, v := range indi.OccupationValues {
-		v = strings.TrimSpace(v)
-		if v == "" || occSeen[v] {
-			continue
+func groupResidencesByOwner(ed *enricher.EnrichedDocument, ownerType string) map[string][]enricher.Residence {
+	m := make(map[string][]enricher.Residence)
+	for _, r := range ed.Residences {
+		if r.OwnerType == ownerType {
+			m[r.OwnerXref] = append(m[r.OwnerXref], r)
 		}
-		occSeen[v] = true
-		rec.AddChild(gedcom.GedcomRecord{Level: 1, Tag: "OCCU", Value: v})
 	}
-	for _, v := range indi.NationalityValues {
-		v = strings.TrimSpace(v)
-		if v == "" || natiSeen[v] {
-			continue
-		}
-		natiSeen[v] = true
-		rec.AddChild(gedcom.GedcomRecord{Level: 1, Tag: "NATI", Value: v})
+	for k := range m {
+		sort.Slice(m[k], func(i, j int) bool {
+			if m[k][i].SortOrder != m[k][j].SortOrder {
+				return m[k][i].SortOrder < m[k][j].SortOrder
+			}
+			return m[k][i].Index < m[k][j].Index
+		})
 	}
-	if r := strings.TrimSpace(indi.Religion); r != "" && !reliSeen[r] {
-		rec.AddChild(gedcom.GedcomRecord{Level: 1, Tag: "RELI", Value: r})
-	}
+	return m
 }
 
 // EnrichedToGEDCOM is a convenience function that converts an EnrichedDocument

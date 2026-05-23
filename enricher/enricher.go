@@ -7,30 +7,40 @@ import (
 	"github.com/lesfleursdelanuitdev/ligneous-gedcom-lib/pedigreedoc"
 )
 
-// individualEventTags lists level-1 INDI subrecords that use INDIVIDUAL_EVENT_STRUCTURE,
-// INDIVIDUAL_ATTRIBUTE_STRUCTURE, or LDS_INDIVIDUAL_ORDINANCE (GEDCOM 5.5).
+// individualEventTags lists GEDCOM 5.5.5 INDIVIDUAL_EVENT_STRUCTURE tags plus LDS ordinances.
+// NCHI is excluded — it is computed from family children and never stored.
+// Attributes (INDIVIDUAL_ATTRIBUTE_STRUCTURE) and RESI are handled separately.
 var individualEventTags = map[string]bool{
-	// INDIVIDUAL_EVENT_STRUCTURE
 	"BIRT": true, "CHR": true, "DEAT": true, "BURI": true, "CREM": true,
 	"ADOP": true, "BAPM": true, "BARM": true, "BASM": true, "BLES": true,
 	"CHRA": true, "CONF": true, "FCOM": true, "ORDN": true, "NATU": true,
 	"EMIG": true, "IMMI": true, "CENS": true, "PROB": true, "WILL": true,
 	"GRAD": true, "RETI": true, "EVEN": true,
-	// INDIVIDUAL_ATTRIBUTE_STRUCTURE (same event-detail pattern as events)
-	"CAST": true, "DSCR": true, "EDUC": true, "IDNO": true, "NATI": true,
-	"NCHI": true, "NMR": true, "OCCU": true, "PROP": true, "RELI": true,
-	"RESI": true, "SSN": true, "TITL": true, "FACT": true,
 	// LDS_INDIVIDUAL_ORDINANCE
 	"BAPL": true, "CONL": true, "ENDL": true, "SLGC": true,
 }
 
-// familyEventTags lists level-1 FAM subrecords from FAMILY_EVENT_STRUCTURE plus
-// LDS_SPOUSE_SEALING (GEDCOM 5.5).
+// individualAttributeTags lists GEDCOM 5.5.5 INDIVIDUAL_ATTRIBUTE_STRUCTURE tags.
+// NCHI is excluded — computed from family children. RESI is handled separately.
+var individualAttributeTags = map[string]bool{
+	"CAST": true, "DSCR": true, "EDUC": true, "IDNO": true, "NATI": true,
+	"NMR": true, "OCCU": true, "PROP": true, "RELI": true,
+	"SSN": true, "TITL": true, "FACT": true,
+}
+
+// familyEventTags lists GEDCOM 5.5.5 FAMILY_EVENT_STRUCTURE tags plus LDS spouse sealing.
+// RESI and FACT are handled separately as family attributes.
 var familyEventTags = map[string]bool{
 	"MARR": true, "ANUL": true, "DIV": true, "DIVF": true, "ENGA": true,
 	"MARB": true, "MARC": true, "MARL": true, "MARS": true, "CENS": true,
-	"RESI": true, "EVEN": true,
+	"EVEN": true,
 	"SLGS": true,
+}
+
+// familyAttributeTags lists GEDCOM 5.5.5 FAMILY_ATTRIBUTE_STRUCTURE tags.
+// NCHI is excluded — computed from family children. RESI is handled separately.
+var familyAttributeTags = map[string]bool{
+	"FACT": true,
 }
 
 // Enrich takes a raw GedcomDocument and produces an EnrichedDocument with all
@@ -88,6 +98,8 @@ func Enrich(doc *gedcom.GedcomDocument) *EnrichedDocument {
 		Surnames:     len(e.surnames),
 		GivenNames:   len(e.givenNames),
 		Events:       len(ed.Events),
+		Attributes:   len(ed.Attributes),
+		Residences:   len(ed.Residences),
 		Notes:        len(ed.Notes),
 		Sources:      len(ed.Sources),
 		Repositories: len(ed.Repositories),
@@ -230,7 +242,7 @@ func (e *enricherState) extractIndividualData(ed *EnrichedDocument) {
 			DeathPlaceIndex:       -1,
 		}
 
-		// Extract attribute values (OCCU, NATI, RELI) - both as events and as scalars
+		// Extract scalar denorm fields (OCCU, NATI, RELI, _GENDER) for normalized tables.
 		for _, child := range indi.Children {
 			val := strings.TrimSpace(child.Value)
 			switch child.Tag {
@@ -253,31 +265,43 @@ func (e *enricherState) extractIndividualData(ed *EnrichedDocument) {
 			}
 		}
 
-		// Extract events and capture birth/death FK indexes
 		sortOrder := 0
 		for _, child := range indi.Children {
-			if !individualEventTags[child.Tag] {
-				continue
+			switch {
+			case individualEventTags[child.Tag]:
+				eventIdx := e.createEvent(ed, child, indi.Xref, "INDI", sortOrder)
+				ed.IndividualEvents = append(ed.IndividualEvents, IndividualEventLink{
+					IndividualXref: indi.Xref,
+					EventIndex:     eventIdx,
+					Role:           "principal",
+				})
+				evt := ed.Events[eventIdx]
+				switch child.Tag {
+				case "BIRT":
+					ei.BirthDateIndex = evt.DateIndex
+					ei.BirthPlaceIndex = evt.PlaceIndex
+				case "DEAT":
+					ei.DeathDateIndex = evt.DateIndex
+					ei.DeathPlaceIndex = evt.PlaceIndex
+				}
+				sortOrder++
+
+			case individualAttributeTags[child.Tag]:
+				attrIdx := e.createAttribute(ed, child, indi.Xref, "INDI", sortOrder)
+				ed.IndividualAttributes = append(ed.IndividualAttributes, IndividualAttributeLink{
+					IndividualXref: indi.Xref,
+					AttributeIndex: attrIdx,
+				})
+				sortOrder++
+
+			case child.Tag == "RESI":
+				residIdx := e.createResidence(ed, child, indi.Xref, "INDI", sortOrder)
+				ed.IndividualResidences = append(ed.IndividualResidences, IndividualResidenceLink{
+					IndividualXref: indi.Xref,
+					ResidenceIndex: residIdx,
+				})
+				sortOrder++
 			}
-
-			eventIdx := e.createEvent(ed, child, indi.Xref, "INDI", sortOrder)
-			ed.IndividualEvents = append(ed.IndividualEvents, IndividualEventLink{
-				IndividualXref: indi.Xref,
-				EventIndex:     eventIdx,
-				Role:           "principal",
-			})
-
-			evt := ed.Events[eventIdx]
-			switch child.Tag {
-			case "BIRT":
-				ei.BirthDateIndex = evt.DateIndex
-				ei.BirthPlaceIndex = evt.PlaceIndex
-			case "DEAT":
-				ei.DeathDateIndex = evt.DateIndex
-				ei.DeathPlaceIndex = evt.PlaceIndex
-			}
-
-			sortOrder++
 		}
 
 		if ei.BirthPlaceIndex >= 0 && ei.BirthPlaceIndex < len(e.places) {
@@ -401,25 +425,38 @@ func (e *enricherState) extractFamilyData(ed *EnrichedDocument) {
 			ChildrenCount:      len(fam.ChildrenByTag("CHIL")),
 		}
 
-		// Extract events and capture marriage FK indexes
 		sortOrder := 0
 		for _, child := range fam.Children {
-			if !familyEventTags[child.Tag] {
-				continue
-			}
+			switch {
+			case familyEventTags[child.Tag]:
+				eventIdx := e.createEvent(ed, child, fam.Xref, "FAM", sortOrder)
+				ed.FamilyEvents = append(ed.FamilyEvents, FamilyEventLink{
+					FamilyXref: fam.Xref,
+					EventIndex: eventIdx,
+				})
+				if child.Tag == "MARR" && ef.MarriageDateIndex == -1 {
+					evt := ed.Events[eventIdx]
+					ef.MarriageDateIndex = evt.DateIndex
+					ef.MarriagePlaceIndex = evt.PlaceIndex
+				}
+				sortOrder++
 
-			eventIdx := e.createEvent(ed, child, fam.Xref, "FAM", sortOrder)
-			ed.FamilyEvents = append(ed.FamilyEvents, FamilyEventLink{
-				FamilyXref: fam.Xref,
-				EventIndex: eventIdx,
-			})
+			case familyAttributeTags[child.Tag]:
+				attrIdx := e.createAttribute(ed, child, fam.Xref, "FAM", sortOrder)
+				ed.FamilyAttributes = append(ed.FamilyAttributes, FamilyAttributeLink{
+					FamilyXref:     fam.Xref,
+					AttributeIndex: attrIdx,
+				})
+				sortOrder++
 
-			if child.Tag == "MARR" && ef.MarriageDateIndex == -1 {
-				evt := ed.Events[eventIdx]
-				ef.MarriageDateIndex = evt.DateIndex
-				ef.MarriagePlaceIndex = evt.PlaceIndex
+			case child.Tag == "RESI":
+				residIdx := e.createResidence(ed, child, fam.Xref, "FAM", sortOrder)
+				ed.FamilyResidences = append(ed.FamilyResidences, FamilyResidenceLink{
+					FamilyXref:     fam.Xref,
+					ResidenceIndex: residIdx,
+				})
+				sortOrder++
 			}
-			sortOrder++
 		}
 
 		ed.Families = append(ed.Families, ef)
@@ -484,6 +521,64 @@ func (e *enricherState) createEvent(ed *EnrichedDocument, rec gedcom.GedcomRecor
 	return evt.Index
 }
 
+func (e *enricherState) createAttribute(ed *EnrichedDocument, rec gedcom.GedcomRecord, ownerXref, ownerType string, sortOrder int) int {
+	attributeType := rec.Tag
+	customType := ""
+	// FACT and IDNO carry a TYPE substructure that names the specific attribute kind.
+	if attributeType == "FACT" || attributeType == "IDNO" {
+		customType = rec.ChildValue("TYPE")
+	}
+
+	dateIdx := e.getOrCreateDate(rec.ChildValue("DATE"))
+	placeIdx := e.getOrCreatePlace(rec.ChildValue("PLAC"))
+
+	attr := Attribute{
+		Index:         len(ed.Attributes),
+		AttributeType: attributeType,
+		CustomType:    customType,
+		Value:         strings.TrimSpace(rec.Value),
+		DateIndex:     dateIdx,
+		PlaceIndex:    placeIdx,
+		Agency:        rec.ChildValue("AGNC"),
+		OwnerXref:     ownerXref,
+		OwnerType:     ownerType,
+		SortOrder:     sortOrder,
+	}
+
+	ed.Attributes = append(ed.Attributes, attr)
+	return attr.Index
+}
+
+func (e *enricherState) createResidence(ed *EnrichedDocument, rec gedcom.GedcomRecord, ownerXref, ownerType string, sortOrder int) int {
+	dateIdx := e.getOrCreateDate(rec.ChildValue("DATE"))
+	placeIdx := e.getOrCreatePlace(rec.ChildValue("PLAC"))
+
+	// ADDR substructure: prefer ADR1 child, fall back to the ADDR value itself.
+	address := ""
+	for _, child := range rec.Children {
+		if child.Tag == "ADDR" {
+			address = strings.TrimSpace(child.Value)
+			if adr1 := child.ChildValue("ADR1"); adr1 != "" {
+				address = strings.TrimSpace(adr1)
+			}
+			break
+		}
+	}
+
+	res := Residence{
+		Index:      len(ed.Residences),
+		Address:    address,
+		DateIndex:  dateIdx,
+		PlaceIndex: placeIdx,
+		OwnerXref:  ownerXref,
+		OwnerType:  ownerType,
+		SortOrder:  sortOrder,
+	}
+
+	ed.Residences = append(ed.Residences, res)
+	return res.Index
+}
+
 func (e *enricherState) extractAssociations(ed *EnrichedDocument) {
 	idx := e.doc.XRefIndex()
 
@@ -495,7 +590,7 @@ func (e *enricherState) extractAssociations(ed *EnrichedDocument) {
 		e.extractAssociationRecords(ed, idx, indi, "INDI", "", indi.ChildrenByTag("ASSO"))
 
 		for _, child := range indi.Children {
-			if !individualEventTags[child.Tag] {
+			if !individualEventTags[child.Tag] && !individualAttributeTags[child.Tag] && child.Tag != "RESI" {
 				continue
 			}
 			e.extractAssociationRecords(ed, idx, indi, "INDI", child.Tag, child.ChildrenByTag("ASSO"))
@@ -510,7 +605,7 @@ func (e *enricherState) extractAssociations(ed *EnrichedDocument) {
 		e.extractAssociationRecords(ed, idx, fam, "FAM", "", fam.ChildrenByTag("ASSO"))
 
 		for _, child := range fam.Children {
-			if !familyEventTags[child.Tag] {
+			if !familyEventTags[child.Tag] && !familyAttributeTags[child.Tag] && child.Tag != "RESI" {
 				continue
 			}
 			e.extractAssociationRecords(ed, idx, fam, "FAM", child.Tag, child.ChildrenByTag("ASSO"))

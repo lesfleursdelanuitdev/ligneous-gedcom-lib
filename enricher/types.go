@@ -28,6 +28,8 @@ type EnrichedDocument struct {
 	Surnames   []Surname
 	GivenNames []GivenName
 	Events     []Event
+	Attributes []Attribute
+	Residences []Residence
 
 	// Top-level records (extracted and structured)
 	Notes        []EnrichedNote
@@ -50,6 +52,12 @@ type EnrichedDocument struct {
 	// Junction/link tables — events
 	IndividualEvents []IndividualEventLink
 	FamilyEvents     []FamilyEventLink
+
+	// Junction/link tables — attributes and residences
+	IndividualAttributes []IndividualAttributeLink
+	FamilyAttributes     []FamilyAttributeLink
+	IndividualResidences []IndividualResidenceLink
+	FamilyResidences     []FamilyResidenceLink
 
 	// Junction/link tables — notes
 	IndividualNotes []IndividualNoteLink
@@ -188,6 +196,35 @@ type Event struct {
 	Value      string `json:"value,omitempty"`
 	Cause      string `json:"cause,omitempty"`
 	Agency     string `json:"agency,omitempty"`
+	OwnerXref  string `json:"owner_xref"`
+	OwnerType  string `json:"owner_type"`
+	SortOrder  int    `json:"sort_order"`
+}
+
+// Attribute mirrors gedcom_attributes. DateIndex and PlaceIndex are indexes into
+// the EnrichedDocument.Dates and Places slices (-1 if none).
+type Attribute struct {
+	ID            string `json:"id,omitempty"`
+	Index         int    `json:"index"`
+	AttributeType string `json:"attribute_type"`
+	CustomType    string `json:"custom_type,omitempty"`
+	Value         string `json:"value,omitempty"`
+	DateIndex     int    `json:"date_index"`
+	PlaceIndex    int    `json:"place_index"`
+	Agency        string `json:"agency,omitempty"`
+	OwnerXref     string `json:"owner_xref"`
+	OwnerType     string `json:"owner_type"`
+	SortOrder     int    `json:"sort_order"`
+}
+
+// Residence mirrors gedcom_residences. DateIndex and PlaceIndex are indexes into
+// the EnrichedDocument.Dates and Places slices (-1 if none).
+type Residence struct {
+	ID         string `json:"id,omitempty"`
+	Index      int    `json:"index"`
+	Address    string `json:"address,omitempty"`
+	DateIndex  int    `json:"date_index"`
+	PlaceIndex int    `json:"place_index"`
 	OwnerXref  string `json:"owner_xref"`
 	OwnerType  string `json:"owner_type"`
 	SortOrder  int    `json:"sort_order"`
@@ -340,6 +377,34 @@ type FamilyEventLink struct {
 	EventIndex int    `json:"event_index"`
 }
 
+// IndividualAttributeLink mirrors gedcom_individual_attributes.
+type IndividualAttributeLink struct {
+	ID             string `json:"id,omitempty"`
+	IndividualXref string `json:"individual_xref"`
+	AttributeIndex int    `json:"attribute_index"`
+}
+
+// FamilyAttributeLink mirrors gedcom_family_attributes.
+type FamilyAttributeLink struct {
+	ID             string `json:"id,omitempty"`
+	FamilyXref     string `json:"family_xref"`
+	AttributeIndex int    `json:"attribute_index"`
+}
+
+// IndividualResidenceLink mirrors gedcom_individual_residences.
+type IndividualResidenceLink struct {
+	ID             string `json:"id,omitempty"`
+	IndividualXref string `json:"individual_xref"`
+	ResidenceIndex int    `json:"residence_index"`
+}
+
+// FamilyResidenceLink mirrors gedcom_family_residences.
+type FamilyResidenceLink struct {
+	ID             string `json:"id,omitempty"`
+	FamilyXref     string `json:"family_xref"`
+	ResidenceIndex int    `json:"residence_index"`
+}
+
 // ---------------------------------------------------------------------------
 // Junction/link types — notes
 // ---------------------------------------------------------------------------
@@ -463,6 +528,8 @@ type Stats struct {
 	Surnames     int `json:"surnames"`
 	GivenNames   int `json:"given_names"`
 	Events       int `json:"events"`
+	Attributes   int `json:"attributes"`
+	Residences   int `json:"residences"`
 	Notes        int `json:"notes"`
 	Sources      int `json:"sources"`
 	Repositories int `json:"repositories"`

@@ -1,11 +1,16 @@
 // Package validator validates GedcomDocument instances against GEDCOM
 // specification rules: structural correctness, required fields, cross-reference
-// integrity, and optionally date consistency.
+// integrity, optional strict year-based date checks, and always-on genealogical
+// warnings (parsed dates, marriage timing, spouse tag sanity, etc.).
 //
 // Usage:
 //
 //	errs := validator.Validate(doc)
 //	errs := validator.ValidateWithOptions(doc, &validator.Options{DateConsistency: true})
+//
+// Each finding has a unique machine-readable Code. Use RelatedXref and Details
+// for additional context. AssociatedXrefs lists every GEDCOM xref involved in the
+// finding (deduplicated, stable order); see setAssociatedXrefs in associated_xrefs.go.
 package validator
 
 import (
@@ -13,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/lesfleursdelanuitdev/ligneous-gedcom-lib/enricher"
 	"github.com/lesfleursdelanuitdev/ligneous-gedcom-lib/gedcom"
 )
 
@@ -40,25 +46,35 @@ func (s Severity) String() string {
 
 // ValidationError describes a single validation finding.
 type ValidationError struct {
-	Severity Severity
-	Code     string
-	Message  string
-	Xref     string
+	Severity    Severity `json:"Severity"`
+	Code        string   `json:"Code"`
+	Message     string   `json:"Message"`
+	Xref        string   `json:"Xref"`
+	RelatedXref string   `json:"RelatedXref,omitempty"`
+	// AssociatedXrefs lists every record xref implicated by the rule (primary, related,
+	// and any other individuals/families/sources), deduplicated in a stable order per Code.
+	AssociatedXrefs []string          `json:"AssociatedXrefs,omitempty"`
+	Details           map[string]string `json:"Details,omitempty"`
 }
 
 func (e *ValidationError) Error() string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("[%s] %s: %s", e.Severity, e.Code, e.Message))
 	if e.Xref != "" {
-		return fmt.Sprintf("[%s] %s: %s (xref: %s)", e.Severity, e.Code, e.Message, e.Xref)
+		sb.WriteString(fmt.Sprintf(" (xref: %s)", e.Xref))
 	}
-	return fmt.Sprintf("[%s] %s: %s", e.Severity, e.Code, e.Message)
+	if e.RelatedXref != "" {
+		sb.WriteString(fmt.Sprintf(" (related: %s)", e.RelatedXref))
+	}
+	return sb.String()
 }
 
 // Options configures which validation rules to run.
 type Options struct {
-	DateConsistency bool // Run date consistency checks (birth < death, parent ages, etc.)
+	DateConsistency bool // Run strict year-based death-before-birth and lifespan checks.
 	MinParentAge    int  // Minimum age to be a parent (default: 12)
 	MaxParentAge    int  // Maximum age to be a parent (default: 80)
-	MinMarriageAge  int  // Minimum age for marriage (default: 14)
+	MinMarriageAge  int  // Minimum age at marriage for warnings (default: 14)
 }
 
 // DefaultOptions returns sensible defaults.
@@ -71,6 +87,23 @@ func DefaultOptions() *Options {
 	}
 }
 
+func normalizeOpts(o *Options) *Options {
+	if o == nil {
+		return DefaultOptions()
+	}
+	out := *o
+	if out.MinParentAge <= 0 {
+		out.MinParentAge = 12
+	}
+	if out.MaxParentAge <= 0 {
+		out.MaxParentAge = 80
+	}
+	if out.MinMarriageAge <= 0 {
+		out.MinMarriageAge = 14
+	}
+	return &out
+}
+
 // Validate runs all validation rules with default options.
 func Validate(doc *gedcom.GedcomDocument) []*ValidationError {
 	return ValidateWithOptions(doc, DefaultOptions())
@@ -78,20 +111,98 @@ func Validate(doc *gedcom.GedcomDocument) []*ValidationError {
 
 // ValidateWithOptions runs validation with custom options.
 func ValidateWithOptions(doc *gedcom.GedcomDocument, opts *Options) []*ValidationError {
-	if opts == nil {
-		opts = DefaultOptions()
-	}
+	opts = normalizeOpts(opts)
 
 	var errs []*ValidationError
 
 	errs = append(errs, validateStructure(doc)...)
 	errs = append(errs, validateIndividuals(doc)...)
 	errs = append(errs, validateFamilies(doc)...)
+	errs = append(errs, validateHeaderAndXrefLength(doc)...)
+	errs = append(errs, validateGenealogyWarnings(doc, opts)...)
 	errs = append(errs, validateXRefs(doc)...)
 	errs = append(errs, validateAssociations(doc)...)
 
 	if opts.DateConsistency {
-		errs = append(errs, validateDateConsistency(doc, opts)...)
+		errs = append(errs, validateDateConsistencyStrict(doc, opts)...)
+	}
+
+	for _, e := range errs {
+		setAssociatedXrefs(e)
+	}
+	return errs
+}
+
+func validateGenealogyWarnings(doc *gedcom.GedcomDocument, opts *Options) []*ValidationError {
+	var errs []*ValidationError
+	for i := range doc.Individuals {
+		indi := &doc.Individuals[i]
+		walkEventDatesForUnparseable(*indi, indi.Xref, &errs)
+		validateIndividualEventOrder(*indi, &errs)
+	}
+	for i := range doc.Families {
+		fam := &doc.Families[i]
+		walkEventDatesForUnparseable(*fam, fam.Xref, &errs)
+	}
+	validateMarriageAndBirthWarnings(doc, opts, &errs)
+	validateChildVersusParentBirthWarnings(doc, opts, &errs)
+	validateSwappedOppositeSexSpouses(doc, &errs)
+	return errs
+}
+
+func validateHeaderAndXrefLength(doc *gedcom.GedcomDocument) []*ValidationError {
+	var errs []*ValidationError
+	if doc.Header.Tag == "" {
+		return errs
+	}
+	ver := gedcomVersionFromHeader(doc.Header)
+	if isGedcom55Or551(ver) && !headerHasSubm(doc.Header) {
+		errs = append(errs, &ValidationError{
+			Severity: SeverityWarning,
+			Code:     CodeHeaderMissingSubm,
+			Message:  fmt.Sprintf("GEDCOM %s header should include a SUBM pointer to a submitter record", ver),
+			Xref:     "",
+			Details:  map[string]string{"gedcom_version": ver},
+		})
+	}
+
+	if !isGedcom7(ver) {
+		checkXrefLen := func(xref string) {
+			if !isXref(xref) {
+				return
+			}
+			inner := strings.Trim(xref, "@")
+			if len(inner) > 20 {
+				errs = append(errs, &ValidationError{
+					Severity: SeverityWarning,
+					Code:     CodeXrefExceedsVersionLimit,
+					Message:  fmt.Sprintf("XRef %s exceeds 20-character identifier limit for GEDCOM versions before 7.0", xref),
+					Xref:     xref,
+					Details:  map[string]string{"length": strconv.Itoa(len(inner)), "gedcom_version": ver},
+				})
+			}
+		}
+		for i := range doc.Individuals {
+			checkXrefLen(doc.Individuals[i].Xref)
+		}
+		for i := range doc.Families {
+			checkXrefLen(doc.Families[i].Xref)
+		}
+		for i := range doc.Sources {
+			checkXrefLen(doc.Sources[i].Xref)
+		}
+		for i := range doc.Notes {
+			checkXrefLen(doc.Notes[i].Xref)
+		}
+		for i := range doc.Repositories {
+			checkXrefLen(doc.Repositories[i].Xref)
+		}
+		for i := range doc.Media {
+			checkXrefLen(doc.Media[i].Xref)
+		}
+		for i := range doc.Submitters {
+			checkXrefLen(doc.Submitters[i].Xref)
+		}
 	}
 
 	return errs
@@ -104,7 +215,7 @@ func validateStructure(doc *gedcom.GedcomDocument) []*ValidationError {
 	if doc.Header.Tag == "" {
 		errs = append(errs, &ValidationError{
 			Severity: SeverityError,
-			Code:     "MISSING_HEADER",
+			Code:     CodeMissingHeader,
 			Message:  "GEDCOM file must start with a HEAD record",
 		})
 	}
@@ -112,7 +223,7 @@ func validateStructure(doc *gedcom.GedcomDocument) []*ValidationError {
 	if doc.Trailer.Tag == "" {
 		errs = append(errs, &ValidationError{
 			Severity: SeverityWarning,
-			Code:     "MISSING_TRAILER",
+			Code:     CodeMissingTrailer,
 			Message:  "GEDCOM file should end with a TRLR record",
 		})
 	}
@@ -128,7 +239,7 @@ func validateIndividuals(doc *gedcom.GedcomDocument) []*ValidationError {
 		if indi.Xref == "" {
 			errs = append(errs, &ValidationError{
 				Severity: SeverityError,
-				Code:     "MISSING_XREF",
+				Code:     CodeMissingXrefIndividual,
 				Message:  "Individual record must have an xref",
 			})
 			continue
@@ -138,10 +249,32 @@ func validateIndividuals(doc *gedcom.GedcomDocument) []*ValidationError {
 		if len(names) == 0 {
 			errs = append(errs, &ValidationError{
 				Severity: SeverityWarning,
-				Code:     "MISSING_NAME",
+				Code:     CodeMissingName,
 				Message:  "Individual record missing NAME tag",
 				Xref:     indi.Xref,
 			})
+		} else {
+			for _, nm := range names {
+				v := strings.TrimSpace(nm.Value)
+				if v == "" {
+					errs = append(errs, &ValidationError{
+						Severity: SeverityWarning,
+						Code:     CodeNameTagEmpty,
+						Message:  "NAME tag is present but its value is empty",
+						Xref:     indi.Xref,
+					})
+					continue
+				}
+				if !strings.Contains(v, "/") {
+					errs = append(errs, &ValidationError{
+						Severity: SeverityWarning,
+						Code:     CodeNameMissingSurnameSlash,
+						Message:  "NAME value has no '/' surname delimiters (unusual for a GEDCOM NAME line)",
+						Xref:     indi.Xref,
+						Details:  map[string]string{"name": truncateRunes(v, 120)},
+					})
+				}
+			}
 		}
 
 		sexChildren := indi.ChildrenByTag("SEX")
@@ -151,7 +284,7 @@ func validateIndividuals(doc *gedcom.GedcomDocument) []*ValidationError {
 			if sex != "" && !validSex[sex] {
 				errs = append(errs, &ValidationError{
 					Severity: SeverityWarning,
-					Code:     "INVALID_SEX",
+					Code:     CodeInvalidSex,
 					Message:  fmt.Sprintf("Invalid SEX value %q, expected M/F/U/X/N", sex),
 					Xref:     indi.Xref,
 				})
@@ -170,7 +303,7 @@ func validateFamilies(doc *gedcom.GedcomDocument) []*ValidationError {
 		if fam.Xref == "" {
 			errs = append(errs, &ValidationError{
 				Severity: SeverityError,
-				Code:     "MISSING_XREF",
+				Code:     CodeMissingXrefFamily,
 				Message:  "Family record must have an xref",
 			})
 			continue
@@ -183,7 +316,7 @@ func validateFamilies(doc *gedcom.GedcomDocument) []*ValidationError {
 		if len(husb) == 0 && len(wife) == 0 && len(chil) == 0 {
 			errs = append(errs, &ValidationError{
 				Severity: SeverityWarning,
-				Code:     "EMPTY_FAMILY",
+				Code:     CodeEmptyFamily,
 				Message:  "Family record has no members (no HUSB, WIFE, or CHIL tags)",
 				Xref:     fam.Xref,
 			})
@@ -191,6 +324,27 @@ func validateFamilies(doc *gedcom.GedcomDocument) []*ValidationError {
 	}
 
 	return errs
+}
+
+func orphanCodeForPointerTag(refTag string) string {
+	switch refTag {
+	case "FAMC":
+		return CodeOrphanedFamc
+	case "FAMS":
+		return CodeOrphanedFams
+	case "HUSB":
+		return CodeOrphanedHusb
+	case "WIFE":
+		return CodeOrphanedWife
+	case "CHIL":
+		return CodeOrphanedChil
+	case "SOUR":
+		return CodeOrphanedSour
+	case "NOTE":
+		return CodeOrphanedNote
+	default:
+		return CodeOrphanedXrefOther
+	}
 }
 
 // validateXRefs checks that all cross-references point to existing records.
@@ -204,16 +358,18 @@ func validateXRefs(doc *gedcom.GedcomDocument) []*ValidationError {
 			return
 		}
 		if _, ok := idx[refValue]; !ok {
+			code := orphanCodeForPointerTag(refTag)
 			errs = append(errs, &ValidationError{
-				Severity: SeverityError,
-				Code:     "BROKEN_XREF",
-				Message:  fmt.Sprintf("%s reference to non-existent record %s", refTag, refValue),
-				Xref:     sourceXref,
+				Severity:    SeverityError,
+				Code:        code,
+				Message:     fmt.Sprintf("%s reference to non-existent record %s", refTag, refValue),
+				Xref:        sourceXref,
+				RelatedXref: refValue,
+				Details:     map[string]string{"pointer_tag": refTag, "pointer": refValue},
 			})
 		}
 	}
 
-	// Check individual references
 	for _, indi := range doc.Individuals {
 		for _, famc := range indi.ChildrenByTag("FAMC") {
 			checkRef(famc.Value, indi.Xref, "FAMC")
@@ -223,7 +379,6 @@ func validateXRefs(doc *gedcom.GedcomDocument) []*ValidationError {
 		}
 	}
 
-	// Check family references
 	for _, fam := range doc.Families {
 		for _, husb := range fam.ChildrenByTag("HUSB") {
 			checkRef(husb.Value, fam.Xref, "HUSB")
@@ -236,7 +391,6 @@ func validateXRefs(doc *gedcom.GedcomDocument) []*ValidationError {
 		}
 	}
 
-	// Check source/note references in all records
 	allRecords := make([]gedcom.GedcomRecord, 0,
 		len(doc.Individuals)+len(doc.Families)+len(doc.Sources))
 	allRecords = append(allRecords, doc.Individuals...)
@@ -278,30 +432,33 @@ func validateAssociations(doc *gedcom.GedcomDocument) []*ValidationError {
 					if target == "" {
 						errs = append(errs, &ValidationError{
 							Severity: SeverityWarning,
-							Code:     "MISSING_ASSOCIATE_XREF",
+							Code:     CodeMissingAssociateXref,
 							Message:  "ASSO tag is missing an associated xref pointer",
 							Xref:     sourceXref,
 						})
 					} else if targetRec, ok := idx[target]; !ok {
 						errs = append(errs, &ValidationError{
-							Severity: SeverityError,
-							Code:     "BROKEN_ASSOCIATE_XREF",
-							Message:  fmt.Sprintf("ASSO reference to non-existent record %s", target),
-							Xref:     sourceXref,
+							Severity:    SeverityError,
+							Code:        CodeOrphanedAssociateXref,
+							Message:     fmt.Sprintf("ASSO reference to non-existent record %s", target),
+							Xref:        sourceXref,
+							RelatedXref: target,
+							Details:     map[string]string{"pointer": target},
 						})
 					} else if targetRec.Tag != "INDI" {
 						errs = append(errs, &ValidationError{
 							Severity: SeverityWarning,
-							Code:     "INVALID_ASSOCIATE_TARGET",
+							Code:     CodeInvalidAssociateTarget,
 							Message:  fmt.Sprintf("ASSO reference %s points to %s, expected INDI", target, targetRec.Tag),
 							Xref:     sourceXref,
+							Details:  map[string]string{"target": target},
 						})
 					}
 
 					if strings.TrimSpace(child.ChildValue("RELA")) == "" {
 						errs = append(errs, &ValidationError{
 							Severity: SeverityWarning,
-							Code:     "MISSING_ASSOCIATE_RELA",
+							Code:     CodeMissingAssociateRela,
 							Message:  "ASSO tag should include a RELA descriptor",
 							Xref:     sourceXref,
 						})
@@ -323,8 +480,8 @@ func validateAssociations(doc *gedcom.GedcomDocument) []*ValidationError {
 	return errs
 }
 
-// validateDateConsistency checks temporal logic of events.
-func validateDateConsistency(doc *gedcom.GedcomDocument, opts *Options) []*ValidationError {
+// validateDateConsistencyStrict runs year-based checks when DateConsistency is enabled.
+func validateDateConsistencyStrict(doc *gedcom.GedcomDocument, opts *Options) []*ValidationError {
 	var errs []*ValidationError
 
 	for _, indi := range doc.Individuals {
@@ -334,7 +491,7 @@ func validateDateConsistency(doc *gedcom.GedcomDocument, opts *Options) []*Valid
 		if birthYear > 0 && deathYear > 0 && deathYear < birthYear {
 			errs = append(errs, &ValidationError{
 				Severity: SeverityError,
-				Code:     "DEATH_BEFORE_BIRTH",
+				Code:     CodeDeathBeforeBirth,
 				Message:  fmt.Sprintf("Death year %d is before birth year %d", deathYear, birthYear),
 				Xref:     indi.Xref,
 			})
@@ -345,81 +502,11 @@ func validateDateConsistency(doc *gedcom.GedcomDocument, opts *Options) []*Valid
 			if age > 120 {
 				errs = append(errs, &ValidationError{
 					Severity: SeverityWarning,
-					Code:     "UNLIKELY_AGE",
+					Code:     CodeAgeAtDeathExceeds120,
 					Message:  fmt.Sprintf("Age at death (%d years) exceeds 120", age),
 					Xref:     indi.Xref,
+					Details:  map[string]string{"age_years": strconv.Itoa(age)},
 				})
-			}
-		}
-	}
-
-	// Check parent-child age gaps
-	idx := doc.XRefIndex()
-	for _, fam := range doc.Families {
-		childRecs := fam.ChildrenByTag("CHIL")
-		husbRecs := fam.ChildrenByTag("HUSB")
-		wifeRecs := fam.ChildrenByTag("WIFE")
-
-		var husbBirth, wifeBirth int
-		if len(husbRecs) > 0 {
-			if h := idx[husbRecs[0].Value]; h != nil {
-				husbBirth = extractEventYear(*h, "BIRT")
-			}
-		}
-		if len(wifeRecs) > 0 {
-			if w := idx[wifeRecs[0].Value]; w != nil {
-				wifeBirth = extractEventYear(*w, "BIRT")
-			}
-		}
-
-		for _, chilRef := range childRecs {
-			c := idx[chilRef.Value]
-			if c == nil {
-				continue
-			}
-			childBirth := extractEventYear(*c, "BIRT")
-			if childBirth == 0 {
-				continue
-			}
-
-			if husbBirth > 0 {
-				gap := childBirth - husbBirth
-				if gap < opts.MinParentAge {
-					errs = append(errs, &ValidationError{
-						Severity: SeverityWarning,
-						Code:     "PARENT_TOO_YOUNG",
-						Message:  fmt.Sprintf("Father was %d at child's birth (min: %d)", gap, opts.MinParentAge),
-						Xref:     fam.Xref,
-					})
-				}
-				if gap > opts.MaxParentAge {
-					errs = append(errs, &ValidationError{
-						Severity: SeverityWarning,
-						Code:     "PARENT_TOO_OLD",
-						Message:  fmt.Sprintf("Father was %d at child's birth (max: %d)", gap, opts.MaxParentAge),
-						Xref:     fam.Xref,
-					})
-				}
-			}
-
-			if wifeBirth > 0 {
-				gap := childBirth - wifeBirth
-				if gap < opts.MinParentAge {
-					errs = append(errs, &ValidationError{
-						Severity: SeverityWarning,
-						Code:     "PARENT_TOO_YOUNG",
-						Message:  fmt.Sprintf("Mother was %d at child's birth (min: %d)", gap, opts.MinParentAge),
-						Xref:     fam.Xref,
-					})
-				}
-				if gap > opts.MaxParentAge {
-					errs = append(errs, &ValidationError{
-						Severity: SeverityWarning,
-						Code:     "PARENT_TOO_OLD",
-						Message:  fmt.Sprintf("Mother was %d at child's birth (max: %d)", gap, opts.MaxParentAge),
-						Xref:     fam.Xref,
-					})
-				}
 			}
 		}
 	}
@@ -434,10 +521,14 @@ func extractEventYear(rec gedcom.GedcomRecord, eventTag string) int {
 		return 0
 	}
 	dateVal := events[0].ChildValue("DATE")
+	pd := enricher.ParseDateString(dateVal)
+	if pd.Year > 0 {
+		return pd.Year
+	}
 	return parseYear(dateVal)
 }
 
-// parseYear extracts a 4-digit year from a GEDCOM date string.
+// parseYear extracts a 4-digit year from a GEDCOM date string (fallback).
 func parseYear(dateStr string) int {
 	if dateStr == "" {
 		return 0

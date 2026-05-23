@@ -22,11 +22,13 @@ func PhysicalLineLengthWarnings(gedcomUTF8 string, maxBytes int) []*ValidationEr
 	var errs []*ValidationError
 	for i, line := range lines {
 		if len(line) > maxBytes {
-			errs = append(errs, &ValidationError{
+			ve := &ValidationError{
 				Severity: SeverityWarning,
 				Code:     "LINE_EXCEEDS_MAX_PHYSICAL_LENGTH",
-				Message: fmt.Sprintf("line %d has length %d bytes (limit %d)", i+1, len(line), maxBytes),
-			})
+				Message:  fmt.Sprintf("line %d has length %d bytes (limit %d)", i+1, len(line), maxBytes),
+			}
+			setAssociatedXrefs(ve)
+			errs = append(errs, ve)
 		}
 	}
 	return errs
