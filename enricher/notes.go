@@ -6,6 +6,17 @@ import (
 	"github.com/lesfleursdelanuitdev/ligneous-gedcom-lib/gedcom"
 )
 
+func mergeTagSets(a, b map[string]bool) map[string]bool {
+	m := make(map[string]bool, len(a)+len(b))
+	for k := range a {
+		m[k] = true
+	}
+	for k := range b {
+		m[k] = true
+	}
+	return m
+}
+
 // extractNotes processes top-level notes and inline notes from individuals,
 // families, events, and sources.
 func (e *enricherState) extractNotes(ed *EnrichedDocument) {
@@ -30,8 +41,9 @@ func (e *enricherState) extractNotes(ed *EnrichedDocument) {
 		}
 	}
 
-	// Phase 2: Notes on individuals (skip event-tag children; those are
-	// handled by Phase 4).
+	// Phase 2: Notes on individuals (skip event and attribute children; those
+	// are handled by Phase 4).
+	indiSkip := mergeTagSets(individualEventTags, individualAttributeTags)
 	for _, indi := range e.doc.Individuals {
 		if indi.Xref == "" {
 			continue
@@ -41,10 +53,11 @@ func (e *enricherState) extractNotes(ed *EnrichedDocument) {
 				IndividualXref: indi.Xref,
 				NoteIndex:      noteIdx,
 			})
-		}, individualEventTags)
+		}, indiSkip)
 	}
 
-	// Phase 3: Notes on families (skip event-tag children).
+	// Phase 3: Notes on families (skip event and attribute children).
+	famSkip := mergeTagSets(familyEventTags, familyAttributeTags)
 	for _, fam := range e.doc.Families {
 		if fam.Xref == "" {
 			continue
@@ -54,7 +67,7 @@ func (e *enricherState) extractNotes(ed *EnrichedDocument) {
 				FamilyXref: fam.Xref,
 				NoteIndex:  noteIdx,
 			})
-		}, familyEventTags)
+		}, famSkip)
 	}
 
 	// Phase 4: Notes on events (recurse fully).

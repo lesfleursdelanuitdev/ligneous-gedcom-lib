@@ -7,38 +7,39 @@ import (
 	"github.com/lesfleursdelanuitdev/ligneous-gedcom-lib/pedigreedoc"
 )
 
-// individualEventTags lists GEDCOM 5.5.5 INDIVIDUAL_EVENT_STRUCTURE tags plus LDS ordinances.
+// individualEventTags lists GEDCOM 5.5.5 INDIVIDUAL_EVENT_STRUCTURE tags plus LDS ordinances
+// and FACT/RESI which behave as events (have DATE/PLAC/TYPE substructures).
 // NCHI is excluded — it is computed from family children and never stored.
-// Attributes (INDIVIDUAL_ATTRIBUTE_STRUCTURE) and RESI are handled separately.
 var individualEventTags = map[string]bool{
 	"BIRT": true, "CHR": true, "DEAT": true, "BURI": true, "CREM": true,
 	"ADOP": true, "BAPM": true, "BARM": true, "BASM": true, "BLES": true,
 	"CHRA": true, "CONF": true, "FCOM": true, "ORDN": true, "NATU": true,
 	"EMIG": true, "IMMI": true, "CENS": true, "PROB": true, "WILL": true,
-	"GRAD": true, "RETI": true, "EVEN": true,
+	"GRAD": true, "RETI": true, "EVEN": true, "FACT": true, "RESI": true,
 	// LDS_INDIVIDUAL_ORDINANCE
 	"BAPL": true, "CONL": true, "ENDL": true, "SLGC": true,
 }
 
 // individualAttributeTags lists GEDCOM 5.5.5 INDIVIDUAL_ATTRIBUTE_STRUCTURE tags.
-// NCHI is excluded — computed from family children. RESI is handled separately.
+// NCHI is excluded — computed from family children.
+// FACT and RESI are in individualEventTags.
 var individualAttributeTags = map[string]bool{
 	"CAST": true, "DSCR": true, "EDUC": true, "IDNO": true, "NATI": true,
 	"NMR": true, "OCCU": true, "PROP": true, "RELI": true,
-	"SSN": true, "TITL": true, "FACT": true,
+	"SSN": true, "TITL": true,
 }
 
-// familyEventTags lists GEDCOM 5.5.5 FAMILY_EVENT_STRUCTURE tags plus LDS spouse sealing.
-// RESI and FACT are handled separately as family attributes.
+// familyEventTags lists GEDCOM 5.5.5 FAMILY_EVENT_STRUCTURE tags plus LDS spouse sealing
+// and RESI which behaves as an event.
 var familyEventTags = map[string]bool{
 	"MARR": true, "ANUL": true, "DIV": true, "DIVF": true, "ENGA": true,
 	"MARB": true, "MARC": true, "MARL": true, "MARS": true, "CENS": true,
-	"EVEN": true,
+	"EVEN": true, "RESI": true,
 	"SLGS": true,
 }
 
 // familyAttributeTags lists GEDCOM 5.5.5 FAMILY_ATTRIBUTE_STRUCTURE tags.
-// NCHI is excluded — computed from family children. RESI is handled separately.
+// NCHI is excluded — computed from family children.
 var familyAttributeTags = map[string]bool{
 	"FACT": true,
 }
@@ -283,6 +284,13 @@ func (e *enricherState) extractIndividualData(ed *EnrichedDocument) {
 				case "DEAT":
 					ei.DeathDateIndex = evt.DateIndex
 					ei.DeathPlaceIndex = evt.PlaceIndex
+				case "RESI":
+					// RESI is also stored as a Residence for address data.
+					residIdx := e.createResidence(ed, child, indi.Xref, "INDI", sortOrder)
+					ed.IndividualResidences = append(ed.IndividualResidences, IndividualResidenceLink{
+						IndividualXref: indi.Xref,
+						ResidenceIndex: residIdx,
+					})
 				}
 				sortOrder++
 
@@ -291,14 +299,6 @@ func (e *enricherState) extractIndividualData(ed *EnrichedDocument) {
 				ed.IndividualAttributes = append(ed.IndividualAttributes, IndividualAttributeLink{
 					IndividualXref: indi.Xref,
 					AttributeIndex: attrIdx,
-				})
-				sortOrder++
-
-			case child.Tag == "RESI":
-				residIdx := e.createResidence(ed, child, indi.Xref, "INDI", sortOrder)
-				ed.IndividualResidences = append(ed.IndividualResidences, IndividualResidenceLink{
-					IndividualXref: indi.Xref,
-					ResidenceIndex: residIdx,
 				})
 				sortOrder++
 			}
@@ -368,7 +368,7 @@ func (e *enricherState) extractIndividualNames(ed *EnrichedDocument, indi gedcom
 		ed.NameForms = append(ed.NameForms, nf)
 		nfIdx := len(ed.NameForms) - 1
 
-		surname := nameRec.ChildValue("SURN")
+		surname := childValueWithConc(nameRec, "SURN")
 		if surname == "" {
 			surname = extractSurnameFromFullName(fullName)
 		}
@@ -385,7 +385,7 @@ func (e *enricherState) extractIndividualNames(ed *EnrichedDocument, indi gedcom
 			}
 		}
 
-		givenName := nameRec.ChildValue("GIVN")
+		givenName := childValueWithConc(nameRec, "GIVN")
 		if givenName == "" {
 			givenName = extractGivenFromFullName(fullName)
 		}
@@ -439,6 +439,14 @@ func (e *enricherState) extractFamilyData(ed *EnrichedDocument) {
 					ef.MarriageDateIndex = evt.DateIndex
 					ef.MarriagePlaceIndex = evt.PlaceIndex
 				}
+				if child.Tag == "RESI" {
+					// RESI is also stored as a Residence for address data.
+					residIdx := e.createResidence(ed, child, fam.Xref, "FAM", sortOrder)
+					ed.FamilyResidences = append(ed.FamilyResidences, FamilyResidenceLink{
+						FamilyXref:     fam.Xref,
+						ResidenceIndex: residIdx,
+					})
+				}
 				sortOrder++
 
 			case familyAttributeTags[child.Tag]:
@@ -446,14 +454,6 @@ func (e *enricherState) extractFamilyData(ed *EnrichedDocument) {
 				ed.FamilyAttributes = append(ed.FamilyAttributes, FamilyAttributeLink{
 					FamilyXref:     fam.Xref,
 					AttributeIndex: attrIdx,
-				})
-				sortOrder++
-
-			case child.Tag == "RESI":
-				residIdx := e.createResidence(ed, child, fam.Xref, "FAM", sortOrder)
-				ed.FamilyResidences = append(ed.FamilyResidences, FamilyResidenceLink{
-					FamilyXref:     fam.Xref,
-					ResidenceIndex: residIdx,
 				})
 				sortOrder++
 			}
@@ -476,7 +476,7 @@ func (e *enricherState) extractFamilyData(ed *EnrichedDocument) {
 			if len(nameRecs) == 0 {
 				continue
 			}
-			surname := nameRecs[0].ChildValue("SURN")
+			surname := childValueWithConc(nameRecs[0], "SURN")
 			if surname == "" {
 				surname = extractSurnameFromFullName(nameRecs[0].Value)
 			}
@@ -495,7 +495,7 @@ func (e *enricherState) extractFamilyData(ed *EnrichedDocument) {
 func (e *enricherState) createEvent(ed *EnrichedDocument, rec gedcom.GedcomRecord, ownerXref, ownerType string, sortOrder int) int {
 	eventType := rec.Tag
 	customType := ""
-	if eventType == "EVEN" {
+	if eventType == "EVEN" || eventType == "FACT" {
 		customType = rec.ChildValue("TYPE")
 	}
 
@@ -815,6 +815,21 @@ func findPedigreeFromFamCHIL(fam *gedcom.GedcomRecord, childXref string) string 
 		}
 	}
 	return ""
+}
+
+// childValueWithConc returns the value of the first child with the given tag,
+// concatenating any CONC grandchildren. This is needed for long values that
+// were split across GEDCOM physical lines.
+func childValueWithConc(rec gedcom.GedcomRecord, tag string) string {
+	child := rec.FirstChildByTag(tag)
+	if child == nil {
+		return ""
+	}
+	val := child.Value
+	for _, conc := range child.ChildrenByTag("CONC") {
+		val += conc.Value
+	}
+	return val
 }
 
 func extractSurnameFromFullName(fullName string) string {

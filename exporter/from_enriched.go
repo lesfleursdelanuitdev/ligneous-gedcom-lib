@@ -155,6 +155,9 @@ func buildIndividualRecord(
 	}
 
 	for _, evt := range events {
+		if evt.EventType == "RESI" {
+			continue // emitted via residences to preserve ADDR substructure
+		}
 		evtRec := buildEventRecord(ed, evt, 1, eventNotes, eventSources[evt.Index], eventMedia[evt.Index], eventAssociates)
 		rec.AddChild(evtRec)
 	}
@@ -163,6 +166,18 @@ func buildIndividualRecord(
 	}
 	for _, res := range residences {
 		rec.AddChild(buildResidenceRecord(ed, res, 1))
+	}
+
+	emittedOccu := make(map[string]bool)
+	for _, attr := range attrs {
+		if attr.AttributeType == "OCCU" {
+			emittedOccu[strings.TrimSpace(attr.Value)] = true
+		}
+	}
+	for _, occ := range indi.OccupationValues {
+		if !emittedOccu[strings.TrimSpace(occ)] {
+			rec.AddChild(gedcom.GedcomRecord{Level: 1, Tag: "OCCU", Value: occ})
+		}
 	}
 
 	byFam := make(map[string][]enricher.ParentChildEdge)
@@ -301,12 +316,12 @@ func buildNameRecords(ed *enricher.EnrichedDocument, indi enricher.EnrichedIndiv
 			fullVal = strings.TrimSpace(strings.Join(givnParts, " "))
 		}
 
-		nameRec := gedcom.GedcomRecord{Level: 1, Tag: "NAME", Value: fullVal}
+		nameRec := buildWrappedSubtag(1, "NAME", fullVal)
 		if len(givnParts) > 0 {
-			nameRec.AddChild(gedcom.GedcomRecord{Level: 2, Tag: "GIVN", Value: strings.Join(givnParts, " ")})
+			nameRec.AddChild(buildWrappedSubtag(2, "GIVN", strings.Join(givnParts, " ")))
 		}
 		if len(surnParts) > 0 {
-			nameRec.AddChild(gedcom.GedcomRecord{Level: 2, Tag: "SURN", Value: strings.Join(surnParts, " ")})
+			nameRec.AddChild(buildWrappedSubtag(2, "SURN", strings.Join(surnParts, " ")))
 		}
 		if nf.NameType != "" && nf.NameType != "birth" {
 			nameRec.AddChild(gedcom.GedcomRecord{Level: 2, Tag: "TYPE", Value: nf.NameType})
@@ -353,7 +368,7 @@ func buildEventRecord(
 	if evt.Agency != "" {
 		evtRec.AddChild(gedcom.GedcomRecord{Level: level + 1, Tag: "AGNC", Value: evt.Agency})
 	}
-	if evt.CustomType != "" && tag == "EVEN" {
+	if evt.CustomType != "" && (tag == "EVEN" || tag == "FACT") {
 		evtRec.AddChild(gedcom.GedcomRecord{Level: level + 1, Tag: "TYPE", Value: evt.CustomType})
 	}
 
@@ -424,6 +439,9 @@ func buildFamilyRecord(
 	appendFamilySurnameNote(&rec, ed, surnameLinks)
 
 	for _, evt := range events {
+		if evt.EventType == "RESI" {
+			continue // emitted via residences to preserve ADDR substructure
+		}
 		evtRec := buildEventRecord(ed, evt, 1, eventNotes, eventSources[evt.Index], eventMedia[evt.Index], eventAssociates)
 		rec.AddChild(evtRec)
 	}

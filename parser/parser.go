@@ -95,6 +95,10 @@ func parseLines(r io.Reader, opts *Options) ([]rawLine, []*ParseError, error) {
 			continue
 		}
 
+		if len(text) > 255 {
+			warnings = append(warnings, newParseError(lineNum, "line exceeds 255-character GEDCOM limit", text[:80]+"..."))
+		}
+
 		rl, err := parseSingleLine(text, lineNum, opts)
 		if err != nil {
 			return nil, warnings, err

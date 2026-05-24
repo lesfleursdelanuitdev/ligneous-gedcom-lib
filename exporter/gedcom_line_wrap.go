@@ -130,6 +130,22 @@ func appendFirstParagraphTagged(rec *gedcom.GedcomRecord, lineLevel int, xref st
 	}
 }
 
+// buildWrappedSubtag builds a GedcomRecord for a scalar tag value, splitting
+// any overflow into CONC children so no physical line exceeds MaxPhysicalGEDCOMLineLen.
+func buildWrappedSubtag(level int, tag, value string) gedcom.GedcomRecord {
+	rec := gedcom.GedcomRecord{Level: level, Tag: tag}
+	maxVal := maxTagPayload(level, tag)
+	chunks := splitUTF8IntoMaxByteChunks(value, maxVal)
+	if len(chunks) == 0 {
+		return rec
+	}
+	rec.Value = chunks[0]
+	for _, ch := range chunks[1:] {
+		rec.AddChild(gedcom.GedcomRecord{Level: level + 1, Tag: "CONC", Value: ch})
+	}
+	return rec
+}
+
 func appendContinuedParagraphNote(rec *gedcom.GedcomRecord, noteLevel int, para string) {
 	contLevel := noteLevel + 1
 	maxCont := maxTagPayload(contLevel, "CONT")
