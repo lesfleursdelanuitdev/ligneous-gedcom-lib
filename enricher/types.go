@@ -60,10 +60,11 @@ type EnrichedDocument struct {
 	FamilyResidences     []FamilyResidenceLink
 
 	// Junction/link tables — notes
-	IndividualNotes []IndividualNoteLink
-	FamilyNotes     []FamilyNoteLink
-	EventNotes      []EventNoteLink
-	SourceNotes     []SourceNoteLink
+	IndividualNotes  []IndividualNoteLink
+	FamilyNotes      []FamilyNoteLink
+	EventNotes       []EventNoteLink
+	ResidenceNotes   []ResidenceNoteLink
+	SourceNotes      []SourceNoteLink
 
 	// Junction/link tables — sources
 	IndividualSources []IndividualSourceLink
@@ -428,6 +429,12 @@ type EventNoteLink struct {
 	ID         string `json:"id,omitempty"`
 	EventIndex int    `json:"event_index"`
 	NoteIndex  int    `json:"note_index"`
+}
+
+// ResidenceNoteLink mirrors gedcom_residence_notes.
+type ResidenceNoteLink struct {
+	ResidenceIndex int `json:"residence_index"`
+	NoteIndex      int `json:"note_index"`
 }
 
 // SourceNoteLink mirrors gedcom_source_notes_v2.

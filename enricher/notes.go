@@ -41,9 +41,10 @@ func (e *enricherState) extractNotes(ed *EnrichedDocument) {
 		}
 	}
 
-	// Phase 2: Notes on individuals (skip event and attribute children; those
-	// are handled by Phase 4).
+	// Phase 2: Notes on individuals (skip event, attribute, and RESI children;
+	// those are handled by Phase 4 and Phase 4b).
 	indiSkip := mergeTagSets(individualEventTags, individualAttributeTags)
+	indiSkip["RESI"] = true
 	for _, indi := range e.doc.Individuals {
 		if indi.Xref == "" {
 			continue
@@ -56,8 +57,10 @@ func (e *enricherState) extractNotes(ed *EnrichedDocument) {
 		}, indiSkip)
 	}
 
-	// Phase 3: Notes on families (skip event and attribute children).
+	// Phase 3: Notes on families (skip event, attribute, and RESI children;
+	// those are handled by Phase 4 and Phase 4b).
 	famSkip := mergeTagSets(familyEventTags, familyAttributeTags)
+	famSkip["RESI"] = true
 	for _, fam := range e.doc.Families {
 		if fam.Xref == "" {
 			continue
@@ -80,6 +83,20 @@ func (e *enricherState) extractNotes(ed *EnrichedDocument) {
 			ed.EventNotes = append(ed.EventNotes, EventNoteLink{
 				EventIndex: evtIdx,
 				NoteIndex:  noteIdx,
+			})
+		}, nil)
+	}
+
+	// Phase 4b: Notes on residences (recurse fully).
+	for resIdx, res := range ed.Residences {
+		rec := e.findResidenceRecord(res)
+		if rec == nil {
+			continue
+		}
+		e.extractRecordNotes(ed, *rec, func(noteIdx int) {
+			ed.ResidenceNotes = append(ed.ResidenceNotes, ResidenceNoteLink{
+				ResidenceIndex: resIdx,
+				NoteIndex:      noteIdx,
 			})
 		}, nil)
 	}
@@ -154,6 +171,26 @@ func (e *enricherState) resolveOrCreateNote(ed *EnrichedDocument, noteRec gedcom
 		IsTopLevel: false,
 	})
 	return idx
+}
+
+// findResidenceRecord locates the raw GedcomRecord for a RESI entry by walking
+// the owner record's children and matching by sort order.
+func (e *enricherState) findResidenceRecord(res Residence) *gedcom.GedcomRecord {
+	owner := e.doc.FindByXref(res.OwnerXref)
+	if owner == nil {
+		return nil
+	}
+	sortOrder := 0
+	for i := range owner.Children {
+		child := &owner.Children[i]
+		if child.Tag == "RESI" {
+			if sortOrder == res.SortOrder {
+				return child
+			}
+			sortOrder++
+		}
+	}
+	return nil
 }
 
 // findEventRecord locates the raw GedcomRecord for an event by walking the

@@ -501,7 +501,7 @@ func TestEnrichNestedNotes(t *testing.T) {
 
 	// @I1@ links to: @N1@ (nested under NAME) and @N2@ (direct).
 	// The inline "Address remark." under RESI > ADDR is NOT here because
-	// RESI is an event tag (skipped by Phase 2, handled by Phase 4).
+	// RESI is a residence tag (skipped by Phase 2, handled by Phase 4b).
 	if len(ed.IndividualNotes) != 2 {
 		t.Errorf("expected 2 individual-note links, got %d", len(ed.IndividualNotes))
 		for i, link := range ed.IndividualNotes {
@@ -515,9 +515,14 @@ func TestEnrichNestedNotes(t *testing.T) {
 		t.Errorf("expected 0 family-note links (event notes go to EventNotes), got %d", len(ed.FamilyNotes))
 	}
 
-	// Event notes: MARR has NOTE @N1@, RESI has nested "Address remark."
-	if len(ed.EventNotes) != 2 {
-		t.Errorf("expected 2 event-note links, got %d", len(ed.EventNotes))
+	// Event notes: only MARR has NOTE @N1@. RESI is no longer an event.
+	if len(ed.EventNotes) != 1 {
+		t.Errorf("expected 1 event-note link (MARR), got %d", len(ed.EventNotes))
+	}
+
+	// Residence notes: RESI > ADDR has the inline "Address remark." (Phase 4b).
+	if len(ed.ResidenceNotes) != 1 {
+		t.Errorf("expected 1 residence-note link, got %d", len(ed.ResidenceNotes))
 	}
 
 	// Source @S1@ has an inline note nested under DATA.
@@ -575,8 +580,8 @@ func TestEnrichMixedParentageFamcNote(t *testing.T) {
 }
 
 func TestEnrichGEDCOM55EventWhitelist(t *testing.T) {
-	// GEDCOM 5.5: sample INDIVIDUAL_ATTRIBUTE_STRUCTURE (FACT), LDS (BAPL),
-	// FAMILY_EVENT_STRUCTURE (CENS, RESI), and LDS_SPOUSE_SEALING (SLGS).
+	// GEDCOM 5.5.1: FACT is an attribute (not an event); RESI is a residence
+	// (not an event). Events are: BIRT, BAPL (individual) + CENS, SLGS (family).
 	input := `0 HEAD
 1 GEDC
 2 VERS 5.5
@@ -612,28 +617,45 @@ func TestEnrichGEDCOM55EventWhitelist(t *testing.T) {
 
 	ed := Enrich(doc)
 
-	if len(ed.Events) != 6 {
-		t.Fatalf("expected 6 events (BIRT+FACT+BAPL + CENS+RESI+SLGS), got %d", len(ed.Events))
+	// Events: BIRT + BAPL (individual) + CENS + SLGS (family) = 4
+	if len(ed.Events) != 4 {
+		t.Fatalf("expected 4 events (BIRT+BAPL + CENS+SLGS), got %d", len(ed.Events))
 	}
-	if len(ed.IndividualEvents) != 3 {
-		t.Errorf("expected 3 individual-event links, got %d", len(ed.IndividualEvents))
+	if len(ed.IndividualEvents) != 2 {
+		t.Errorf("expected 2 individual-event links (BIRT, BAPL), got %d", len(ed.IndividualEvents))
 	}
-	if len(ed.FamilyEvents) != 3 {
-		t.Errorf("expected 3 family-event links, got %d", len(ed.FamilyEvents))
+	if len(ed.FamilyEvents) != 2 {
+		t.Errorf("expected 2 family-event links (CENS, SLGS), got %d", len(ed.FamilyEvents))
 	}
 
-	wantTypes := map[string]bool{
-		"BIRT": true, "FACT": true, "BAPL": true,
-		"CENS": true, "RESI": true, "SLGS": true,
-	}
+	wantEventTypes := map[string]bool{"BIRT": true, "BAPL": true, "CENS": true, "SLGS": true}
 	for _, evt := range ed.Events {
-		if !wantTypes[evt.EventType] {
+		if !wantEventTypes[evt.EventType] {
 			t.Errorf("unexpected event type %q", evt.EventType)
 		}
-		delete(wantTypes, evt.EventType)
+		delete(wantEventTypes, evt.EventType)
 	}
-	if len(wantTypes) != 0 {
-		t.Errorf("missing event types: %v", wantTypes)
+	if len(wantEventTypes) != 0 {
+		t.Errorf("missing event types: %v", wantEventTypes)
+	}
+
+	// FACT → individual attribute
+	if len(ed.Attributes) != 1 || ed.Attributes[0].AttributeType != "FACT" {
+		t.Errorf("expected 1 attribute (FACT), got %d: %v", len(ed.Attributes), ed.Attributes)
+	}
+	if ed.Attributes[0].CustomType != "Military service" {
+		t.Errorf("FACT custom type: got %q, want %q", ed.Attributes[0].CustomType, "Military service")
+	}
+	if len(ed.IndividualAttributes) != 1 {
+		t.Errorf("expected 1 individual-attribute link, got %d", len(ed.IndividualAttributes))
+	}
+
+	// RESI → family residence (not an event)
+	if len(ed.Residences) != 1 {
+		t.Errorf("expected 1 residence (RESI), got %d", len(ed.Residences))
+	}
+	if len(ed.FamilyResidences) != 1 {
+		t.Errorf("expected 1 family-residence link, got %d", len(ed.FamilyResidences))
 	}
 }
 
