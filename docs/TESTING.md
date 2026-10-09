@@ -163,9 +163,6 @@ File: [pedigreedoc/pedigreedoc_test.go](../pedigreedoc/pedigreedoc_test.go)
 | `minimal55.ged` | Bare-minimum GEDCOM 5.5 file |
 | `minimal551.ged` | Bare-minimum GEDCOM 5.5.1 file |
 | `comprehensive551.ged` | Wide coverage of 5.5.1 tags |
-| `gracis.ged` | Real family tree (small) |
-| `tree1.ged` | Real family tree (small) |
-| `xavier.ged` | Real family tree (small) |
 | `royal92.ged` | British royal family (mid-size) |
 | `pres2020.ged` | US presidents (mid-size) |
 
