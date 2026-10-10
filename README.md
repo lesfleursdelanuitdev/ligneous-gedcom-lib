@@ -4,9 +4,23 @@ A Go library that parses GEDCOM genealogy files, validates them, and turns them 
 
 Part of [Ligneous](https://github.com/lesfleursdelanuitdev/Ligneous).
 
+**Architecture:** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+
 ```
 go get github.com/lesfleursdelanuitdev/ligneous-gedcom-lib
 ```
+
+## Screenshots
+
+These come from the Gonsalves family site and its admin app running on a demo database, loaded with the public US-presidents sample tree (`pres2020.ged`) through the real import pipeline. No family data is shown.
+
+<img src="docs/screenshots/admin-validator.png" alt="The validator's findings for pres2020.ged, shown in the admin app (41 warnings, 0 errors)">
+
+*The validator's findings for `pres2020.ged`, shown in the admin app (41 warnings, 0 errors).*
+
+<img src="docs/screenshots/admin-import-plan.png" alt="The enriched import summarized before anything is written: 2,322 people, 1,115 families, 3,539 events">
+
+*The enriched import summarized before anything is written: 2,322 people, 1,115 families, 3,539 events.*
 
 ## What it does
 
@@ -149,7 +163,7 @@ The library does not talk to a database or serve HTTP. That is the job of [ligne
 | `validator` | Structural, cross-reference, date and family-logic checks; 37 stable finding codes with severity (error, warning, hint) |
 | `enricher` | `GedcomDocument` to `EnrichedDocument`; date and place parsing, name forms, events, attributes, residences, notes, sources, media, edges, UUIDs |
 | `exporter` | Writes GEDCOM (with line wrapping), denormalized JSON and CSV, from a tree or from an `EnrichedDocument` |
-| `reconciliation` | Compares two `EnrichedDocument`s and builds a merge plan: id and xref alignment, optional fuzzy matching with Hungarian assignment, diffs and conflicts |
+| `reconciliation` | Compares two `EnrichedDocument`s and builds a merge plan: id and xref alignment, optional fuzzy matching with an optimal (min-cost) assignment, diffs and conflicts |
 | `pedigreedoc` | Reads and writes the "mixed biological/adoptive parentage" note convention |
 | `cmd/gedvalidate` | CLI: parse a file and print validator findings |
 | `cmd/gedcomstdin` | CLI: read an `EnrichedDocument` as JSON on stdin and print GEDCOM |
