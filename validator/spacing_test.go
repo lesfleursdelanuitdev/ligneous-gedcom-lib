@@ -61,3 +61,39 @@ func TestTrimmedValue(t *testing.T) {
 		t.Error("Value changed")
 	}
 }
+
+// A date finding points at the DATE line of the event whose year was used.
+// Here the first BIRT and the first DEAT have no DATE; the second ones do.
+func TestDateFindingLineFollowsTheEventUsed(t *testing.T) {
+	in := "0 HEAD\n1 CHAR UTF-8\n" + // 1-2
+		"0 @I1@ INDI\n1 NAME A /B/\n" + // 3-4
+		"1 BIRT\n2 PLAC Paris\n" + // 5-6: first BIRT, no DATE
+		"1 BIRT\n2 DATE 1900\n" + // 7-8
+		"1 DEAT\n" + // 9: first DEAT, no DATE
+		"1 DEAT\n2 DATE 1890\n" + // 10-11
+		"1 FAMS @F1@\n" + // 12
+		"0 @I2@ INDI\n1 NAME C /B/\n1 BIRT\n1 BIRT\n2 DATE 1905\n1 FAMC @F1@\n" + // 13-18
+		"0 @F1@ FAM\n1 HUSB @I1@\n1 CHIL @I2@\n" + // 19-21
+		"1 MARR\n1 MARR\n2 DATE 1880\n" + // 22-24
+		"0 TRLR\n"
+	doc, _, err := parser.Parse(strings.NewReader(in))
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts := DefaultOptions()
+	opts.DateConsistency = true
+	want := map[string]int{
+		CodeDeathBeforeBirth:          11, // DEAT DATE 1890 vs BIRT DATE 1900
+		CodeFatherTooYoungAtBirth:     17, // child's second BIRT DATE
+		CodeMarriageBeforeSpouseBirth: 24, // second MARR DATE
+	}
+	got := map[string]int{}
+	for _, e := range ValidateWithOptions(doc, opts) {
+		if _, ok := want[e.Code]; ok {
+			got[e.Code] = e.Line
+		}
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("lines = %v, want %v", got, want)
+	}
+}

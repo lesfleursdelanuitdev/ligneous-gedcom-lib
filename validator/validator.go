@@ -557,8 +557,8 @@ func validateDateConsistencyStrict(doc *gedcom.GedcomDocument, opts *Options) []
 	var errs []*ValidationError
 
 	for _, indi := range doc.Individuals {
-		birthYear := extractEventYear(indi, "BIRT")
-		deathYear := extractEventYear(indi, "DEAT")
+		birthYear, _ := eventYear(&indi, "BIRT")
+		deathYear, deathLine := eventYear(&indi, "DEAT")
 
 		if birthYear > 0 && deathYear > 0 && deathYear < birthYear {
 			errs = append(errs, &ValidationError{
@@ -570,7 +570,7 @@ func validateDateConsistencyStrict(doc *gedcom.GedcomDocument, opts *Options) []
 					"death_year": strconv.Itoa(deathYear),
 					"birth_year": strconv.Itoa(birthYear),
 				},
-				Line: eventDateLine(&indi, "DEAT"),
+				Line: deathLine,
 			})
 		}
 
@@ -583,7 +583,7 @@ func validateDateConsistencyStrict(doc *gedcom.GedcomDocument, opts *Options) []
 					Message:  fmt.Sprintf("Age at death (%d years) exceeds 120", age),
 					Xref:     indi.Xref,
 					Details:  map[string]string{"age_years": strconv.Itoa(age), "age": strconv.Itoa(age)},
-					Line:     eventDateLine(&indi, "DEAT"),
+					Line:     deathLine,
 				})
 			}
 		}
@@ -592,18 +592,33 @@ func validateDateConsistencyStrict(doc *gedcom.GedcomDocument, opts *Options) []
 	return errs
 }
 
-// extractEventYear pulls the year from the first event of the given tag type.
-func extractEventYear(rec gedcom.GedcomRecord, eventTag string) int {
-	events := rec.ChildrenByTag(eventTag)
-	if len(events) == 0 {
-		return 0
+// eventYear returns the year of rec's first eventTag event whose DATE gives
+// a year, and the line of that DATE. With no such event the year is 0 and the
+// line is the first event's DATE line, or its own line when it has no DATE
+// (0 when there is no event). Findings use the line, so it always belongs to
+// the event the year came from.
+func eventYear(rec *gedcom.GedcomRecord, eventTag string) (year, line int) {
+	for i := range rec.Children {
+		ev := &rec.Children[i]
+		if ev.Tag != eventTag {
+			continue
+		}
+		if line == 0 {
+			line = dateLine(ev)
+		}
+		dateVal := childTrimmed(ev, "DATE")
+		if dateVal == "" {
+			continue
+		}
+		y := enricher.ParseDateString(dateVal).Year
+		if y <= 0 {
+			y = parseYear(dateVal)
+		}
+		if y > 0 {
+			return y, dateLine(ev)
+		}
 	}
-	dateVal := childTrimmed(&events[0], "DATE")
-	pd := enricher.ParseDateString(dateVal)
-	if pd.Year > 0 {
-		return pd.Year
-	}
-	return parseYear(dateVal)
+	return 0, line
 }
 
 // parseYear extracts a 4-digit year from a GEDCOM date string (fallback).
