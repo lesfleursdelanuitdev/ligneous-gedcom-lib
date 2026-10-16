@@ -40,7 +40,9 @@ func classifyChar(declared string) charKind {
 		return kindASCII
 	case "ANSEL":
 		return kindANSEL
-	case "ANSI", "WINDOWS-1252", "CP1252":
+	case "ANSI", "WINDOWS-1252", "CP1252",
+		"ISO-8859-1", "ISO8859-1", "ISO_8859-1", "LATIN1", "LATIN-1":
+		// ISO-8859-1 is read as its superset Windows-1252, as browsers do.
 		return kindANSI
 	case "IBMPC", "IBM WINDOWS", "IBM-PC", "IBM":
 		return kindCP437

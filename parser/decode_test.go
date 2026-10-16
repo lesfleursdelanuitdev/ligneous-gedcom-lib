@@ -241,3 +241,31 @@ func TestFindHeadLineAfterVeryLongLine(t *testing.T) {
 		t.Errorf("findHeadLine = %d, want 2", got)
 	}
 }
+
+// ISO-8859-1 and its spellings, LATIN1, WINDOWS-1252 and CP1252 are ANSI:
+// read as Windows-1252, with no MISLABELED when the bytes agree.
+func TestDecodeLatin1Aliases(t *testing.T) {
+	for _, name := range []string{"ISO-8859-1", "iso8859-1", "ISO_8859-1", "Latin1", "LATIN-1", "windows-1252", "Cp1252", "ANSI"} {
+		t.Run(name, func(t *testing.T) {
+			raw := []byte("0 HEAD\r\n1 CHAR " + name + "\r\n0 @I1@ INDI\r\n1 NAME Ren\xe9 /Dupr\xe9/\r\n0 TRLR\r\n")
+			out, info, fs := Decode(raw)
+			if info.Detected != "Windows-1252" || info.Declared != name || info.Reason != "header CHAR" {
+				t.Errorf("info = %+v", info)
+			}
+			if got := codes(fs); !reflect.DeepEqual(got, []string{CodeEncodingNotUTF8}) {
+				t.Errorf("codes = %v", got)
+			}
+			if !strings.Contains(string(out), "1 NAME René /Dupré/") {
+				t.Errorf("out = %q", out)
+			}
+		})
+	}
+}
+
+// A Latin-1 alias over bytes that are valid UTF-8 is mislabeled, like ANSI.
+func TestDecodeLatin1AliasOnUTF8(t *testing.T) {
+	_, info, fs := Decode([]byte("0 HEAD\n1 CHAR ISO-8859-1\n0 @I1@ INDI\n1 NAME René /Dupré/\n0 TRLR\n"))
+	if info.Detected != "UTF-8" || !reflect.DeepEqual(codes(fs), []string{CodeEncodingMislabeled}) {
+		t.Errorf("info = %+v codes = %v", info, codes(fs))
+	}
+}
