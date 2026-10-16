@@ -7,7 +7,8 @@
 //     "1 CHAR UTF-8", adding that line after the GEDC structure if missing;
 //   - turn bare "\r" line endings into "\r\n", keeping "\n" and "\r\n" as they are;
 //   - remove blank lines;
-//   - remove spaces and tabs before the level number;
+//   - remove spaces and tabs before the level number (only on lines that
+//     have a level and a tag; other lines are left untouched);
 //   - split lines over 255 bytes with CONC (see below);
 //   - add "0 TRLR" when the file has no trailer.
 //
@@ -127,7 +128,8 @@ func Repair(data []byte) (*Result, error) {
 		changes = append(changes, Change{0, whatBOM})
 	}
 
-	// Clean each line from HEAD on: drop blank lines, strip leading whitespace.
+	// Clean each line from HEAD on: drop blank lines, strip leading whitespace
+	// from GEDCOM lines.
 	clean := make([]string, n)
 	removed := make([]bool, n)
 	nodes := make([]node, n)
@@ -140,17 +142,21 @@ func Repair(data []byte) (*Result, error) {
 			changes = append(changes, Change{i + 1, whatBlank})
 			continue
 		}
-		if s := strings.TrimLeft(t, " \t"); s != t {
+		// Strip leading whitespace only from a GEDCOM line (level and tag);
+		// any other line is kept exactly as it is.
+		s := strings.TrimLeft(t, " \t")
+		nd := tokenise(s)
+		nd.parent = -1
+		if !nd.ok {
+			clean[i] = t
+			nodes[i] = nd
+			continue
+		}
+		if s != t {
 			t = s
 			changes = append(changes, Change{i + 1, whatWhitespace})
 		}
 		clean[i] = t
-		nd := tokenise(t)
-		nd.parent = -1
-		if !nd.ok {
-			nodes[i] = nd
-			continue
-		}
 		anyNode = true
 		if nd.level == 0 {
 			stack = append(stack[:0], i)

@@ -465,3 +465,18 @@ func TestSplitLinesMatchesParser(t *testing.T) {
 		}
 	}
 }
+
+// Leading spaces are removed only from lines that are GEDCOM lines (a level
+// and a tag). Any other line is left exactly as it is.
+func TestRepairLeadingSpaceOnlyOnGedcomLines(t *testing.T) {
+	in := "0 HEAD\n1 CHAR UTF-8\n0 @I1@ INDI\n  1 NAME A /B/\n   some stray text\n \tx\n  @\n0 TRLR\n"
+	res, err := Repair([]byte(in))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertChanges(t, res.Changes, []Change{{4, "removed spaces before the level number"}})
+	want := "0 HEAD\n1 CHAR UTF-8\n0 @I1@ INDI\n1 NAME A /B/\n   some stray text\n \tx\n  @\n0 TRLR\n"
+	if string(res.Data) != want {
+		t.Errorf("Data = %q\nwant   %q", res.Data, want)
+	}
+}
