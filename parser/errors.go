@@ -12,6 +12,8 @@ type ParseError struct {
 	Code string
 	// Severity is "error", "warning" or "hint".
 	Severity string
+	// Details carries extra values for explaining the finding (may be nil).
+	Details map[string]string `json:"Details,omitempty"`
 }
 
 func (e *ParseError) Error() string {
@@ -35,6 +37,11 @@ const (
 	CodeXrefWithoutTag    = "XREF_WITHOUT_TAG"
 	CodeTooDeep           = "TOO_DEEP"
 	CodeReadError         = "READ_ERROR"
+
+	CodeEncodingNotUTF8    = "ENCODING_NOT_UTF8"
+	CodeEncodingMislabeled = "ENCODING_MISLABELED"
+	CodeEncodingUndeclared = "ENCODING_UNDECLARED"
+	CodeEncodingBadBytes   = "ENCODING_BAD_BYTES"
 )
 
 var codeSeverity = map[string]string{
@@ -46,6 +53,11 @@ var codeSeverity = map[string]string{
 	CodeXrefWithoutTag:    "error",
 	CodeTooDeep:           "error",
 	CodeReadError:         "error",
+
+	CodeEncodingNotUTF8:    "hint",
+	CodeEncodingMislabeled: "warning",
+	CodeEncodingUndeclared: "hint",
+	CodeEncodingBadBytes:   "warning",
 }
 
 func newParseError(code string, line int, message, ctx string) *ParseError {

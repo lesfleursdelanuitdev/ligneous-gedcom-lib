@@ -48,8 +48,13 @@ func ParseWithOptions(r io.Reader, opts *Options) (*gedcom.GedcomDocument, []*Pa
 		}
 	}
 
-	reader := stripBOM(r)
-	lines, warnings, err := parseLines(reader, opts)
+	raw, err := io.ReadAll(r)
+	if err != nil {
+		return nil, nil, wrapParseError(CodeReadError, 0, "error reading input", "", err)
+	}
+	text, info, findings := Decode(raw)
+	lines, parsed, lineCount, err := parseLines(bytes.NewReader(text), opts)
+	warnings := append(findings, parsed...)
 	if err != nil {
 		return nil, warnings, err
 	}
@@ -63,24 +68,13 @@ func ParseWithOptions(r io.Reader, opts *Options) (*gedcom.GedcomDocument, []*Pa
 	}
 
 	doc := buildDocument(lines, warnings)
+	doc.Encoding = info
+	doc.LineCount = lineCount
 	return doc, warnings, nil
 }
 
-// stripBOM wraps a reader to remove a UTF-8 BOM if present.
-func stripBOM(r io.Reader) io.Reader {
-	buf := make([]byte, 3)
-	n, err := io.ReadFull(r, buf)
-	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
-		return r
-	}
-	if n == 3 && bytes.Equal(buf, []byte{0xEF, 0xBB, 0xBF}) {
-		return r
-	}
-	return io.MultiReader(bytes.NewReader(buf[:n]), r)
-}
-
 // parseLines tokenizes the input into raw lines.
-func parseLines(r io.Reader, opts *Options) ([]rawLine, []*ParseError, error) {
+func parseLines(r io.Reader, opts *Options) ([]rawLine, []*ParseError, int, error) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 64*1024), 1<<20)
 	scanner.Split(splitGedcomLines)
@@ -106,16 +100,16 @@ func parseLines(r io.Reader, opts *Options) ([]rawLine, []*ParseError, error) {
 			warnings = append(warnings, warn)
 		}
 		if err != nil {
-			return nil, warnings, err
+			return nil, warnings, lineNum, err
 		}
 		lines = append(lines, rl)
 	}
 
 	if err := scanner.Err(); err != nil {
-		return nil, warnings, wrapParseError(CodeReadError, lineNum, "error reading input", "", err)
+		return nil, warnings, lineNum, wrapParseError(CodeReadError, lineNum, "error reading input", "", err)
 	}
 
-	return lines, warnings, nil
+	return lines, warnings, lineNum, nil
 }
 
 func isSep(c byte) bool { return c == ' ' || c == '\t' }

@@ -140,12 +140,26 @@ func TestParseFamilies(t *testing.T) {
 	}
 }
 
+// withoutEncoding drops the encoding findings. The inputs of the tests that use
+// it are header-only snippets with no CHAR line, which now earns an
+// ENCODING_UNDECLARED hint that these tests are not about.
+func withoutEncoding(ws []*ParseError) []*ParseError {
+	var out []*ParseError
+	for _, w := range ws {
+		if !strings.HasPrefix(w.Code, "ENCODING_") {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
 func TestParseEmptyLine(t *testing.T) {
 	input := "0 HEAD\n\n0 TRLR\n"
 	doc, warnings, err := Parse(strings.NewReader(input))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	warnings = withoutEncoding(warnings)
 	if len(warnings) != 1 {
 		t.Errorf("expected 1 warning for empty line, got %d", len(warnings))
 	} else if warnings[0].Code != CodeEmptyLine || warnings[0].Severity != "warning" {
@@ -388,6 +402,7 @@ func TestLeadingWhitespaceWarning(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	warnings = withoutEncoding(warnings)
 	if len(warnings) != 1 || warnings[0].Code != CodeLeadingWhitespace || warnings[0].Line != 3 || warnings[0].Severity != "warning" {
 		t.Fatalf("warnings = %+v", warnings)
 	}
@@ -401,6 +416,7 @@ func TestLongLineOver64KB(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	warnings = withoutEncoding(warnings)
 	if len(doc.Notes[0].Value) != 70000 {
 		t.Errorf("value length %d", len(doc.Notes[0].Value))
 	}

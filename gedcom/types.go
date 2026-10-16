@@ -20,6 +20,10 @@ type GedcomDocument struct {
 	Media        []GedcomRecord `json:"media,omitempty"`
 	Submitters   []GedcomRecord `json:"submitters,omitempty"`
 	Trailer      GedcomRecord   `json:"trailer"`
+	// Encoding records how the file's bytes were decoded.
+	Encoding EncodingInfo `json:"encoding"`
+	// LineCount is the number of lines in the file, empty lines included.
+	LineCount int `json:"lineCount"`
 }
 
 // GedcomRecord represents a single GEDCOM record (line + children).
