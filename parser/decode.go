@@ -1,7 +1,6 @@
 package parser
 
 import (
-	"bufio"
 	"bytes"
 	"fmt"
 	"strconv"
@@ -62,11 +61,10 @@ func (k charKind) legacy() bool { return k >= kindANSEL }
 // in b.
 func scanChar(b []byte) (value string, line int) {
 	head, _ := findHead(b)
-	sc := bufio.NewScanner(bytes.NewReader(b))
-	sc.Buffer(make([]byte, 64*1024), 1<<20)
-	sc.Split(splitGedcomLines)
 	n := 0
-	for sc.Scan() {
+	for pos := 0; pos < len(b); {
+		var ln []byte
+		ln, pos = nextLine(b, pos)
 		n++
 		if n < head {
 			continue
@@ -74,7 +72,6 @@ func scanChar(b []byte) (value string, line int) {
 		if n-head >= 50 {
 			break
 		}
-		ln := sc.Bytes()
 		f := bytes.Fields(ln)
 		if len(f) >= 2 && string(f[0]) == "0" && n > head {
 			break // the header ended

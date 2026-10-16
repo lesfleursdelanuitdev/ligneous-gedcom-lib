@@ -211,3 +211,33 @@ func TestDecodeCharCapCountsFromHead(t *testing.T) {
 		t.Errorf("codes = %v", codes(fs))
 	}
 }
+
+func longLineANSEL(inHead bool) []byte {
+	long := strings.Repeat("x", 1<<20+10) + "\r\n"
+	body := "1 NAME Ren\xe2e /Dupr\xe2e/\r\n0 TRLR\r\n"
+	if inHead {
+		return []byte("0 HEAD\r\n" + long + "1 CHAR ANSEL\r\n0 @I1@ INDI\r\n" + body)
+	}
+	return []byte(long + "0 HEAD\r\n1 CHAR ANSEL\r\n0 @I1@ INDI\r\n" + body)
+}
+
+func TestDecodeCharAfterVeryLongLine(t *testing.T) {
+	for _, inHead := range []bool{false, true} {
+		out, info, fs := Decode(longLineANSEL(inHead))
+		if info.Detected != "ANSEL" || info.Declared != "ANSEL" || info.Reason != "header CHAR" {
+			t.Errorf("inHead=%v info = %+v", inHead, info)
+		}
+		if got := codes(fs); !reflect.DeepEqual(got, []string{CodeEncodingNotUTF8}) {
+			t.Errorf("inHead=%v codes = %v", inHead, got)
+		}
+		if !strings.Contains(string(out), "René /Dupré/") {
+			t.Errorf("inHead=%v name not decoded", inHead)
+		}
+	}
+}
+
+func TestFindHeadLineAfterVeryLongLine(t *testing.T) {
+	if got := findHeadLine(longLineANSEL(false)); got != 2 {
+		t.Errorf("findHeadLine = %d, want 2", got)
+	}
+}

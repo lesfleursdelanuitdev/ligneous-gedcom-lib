@@ -93,13 +93,12 @@ func findHeadLine(text []byte) int {
 // findHead is findHeadLine that also reports whether a "0 HEAD" line exists.
 // It works on raw bytes: HEAD is ASCII in every supported encoding.
 func findHead(text []byte) (int, bool) {
-	sc := bufio.NewScanner(bytes.NewReader(text))
-	sc.Buffer(make([]byte, 64*1024), 1<<20)
-	sc.Split(splitGedcomLines)
 	n := 0
-	for sc.Scan() {
+	for pos := 0; pos < len(text); {
+		var ln []byte
+		ln, pos = nextLine(text, pos)
 		n++
-		f := strings.Fields(sc.Text())
+		f := strings.Fields(string(ln))
 		if len(f) >= 2 && f[0] == "0" && f[1] == "HEAD" {
 			return n, true
 		}
