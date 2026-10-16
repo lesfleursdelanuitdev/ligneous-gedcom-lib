@@ -578,6 +578,23 @@ const lineFixture = `0 HEAD
 1 NAME Friend /One/
 1 ASSO @Z9@
 2 RELA friend
+0 @I9@ INDI
+1 NAME Pal /Two/
+1 ASSO @I1@
+0 @I10@ INDI
+1 NAME 
+0 @I11@ INDI
+1 NAME Pal /Three/
+1 ASSO @F2@
+2 RELA friend
+1 BIRT
+2 DATE 1900
+1 BAPM
+2 DATE 1890
+1 DEAT
+2 DATE 1950
+1 BURI
+2 DATE 1940
 0 @F1@ FAM
 1 WIFE @I1@
 1 CHIL @I2@
@@ -608,6 +625,11 @@ func TestFindingLinePointsAtTag(t *testing.T) {
 		CodeOrphanedAssociateXref:   "ASSO",
 		CodeOrphanedChil:            "CHIL",
 		CodeEmptyFamily:             "FAM",
+		CodeMissingAssociateRela:    "ASSO",
+		CodeNameTagEmpty:            "NAME",
+		CodeInvalidAssociateTarget:  "ASSO",
+		CodeBaptismBeforeBirth:      "DATE",
+		CodeBurialBeforeDeath:       "DATE",
 	}
 	seen := map[string]bool{}
 	for _, e := range errs {
@@ -733,6 +755,9 @@ func TestNewDetailsInvalidTargetAndAges(t *testing.T) {
 0 @F3@ FAM
 1 HUSB @I4@
 1 CHIL @I5@
+0 @F4@ FAM
+1 WIFE @I4@
+1 CHIL @I5@
 0 TRLR
 `
 	errs := ValidateWithOptions(parseLenient(t, src), &Options{DateConsistency: true})
@@ -740,6 +765,7 @@ func TestNewDetailsInvalidTargetAndAges(t *testing.T) {
 		CodeInvalidAssociateTarget: "",
 		CodeFatherTooYoungAtBirth:  "5",
 		CodeFatherTooOldAtBirth:    "100",
+		CodeMotherTooOldAtBirth:    "100",
 		CodeAgeAtDeathExceeds120:   "150",
 	}
 	for code, age := range want {

@@ -532,6 +532,7 @@ func validateAssociations(doc *gedcom.GedcomDocument) []*ValidationError {
 							Code:     CodeMissingAssociateRela,
 							Message:  "ASSO tag should include a RELA descriptor",
 							Xref:     sourceXref,
+							Line:     child.Line,
 						})
 					}
 				}
