@@ -8,6 +8,8 @@
 // that preserves the hierarchical structure and original ordering.
 package gedcom
 
+import "strings"
+
 // GedcomDocument is the canonical intermediate representation of a GEDCOM file.
 // All parsing produces this type; all exporters consume it.
 type GedcomDocument struct {
@@ -67,6 +69,14 @@ func (r *GedcomRecord) ChildValue(tag string) string {
 		return child.Value
 	}
 	return ""
+}
+
+// TrimmedValue returns Value without leading and trailing whitespace. The
+// parser keeps values verbatim, so "1 HUSB  @I1@" has Value " @I1@"; read
+// pointers, SEX, NAME, DATE, PLAC and other code-like values with this.
+// CONC, CONT, NOTE and TEXT values are text: read them verbatim.
+func (r GedcomRecord) TrimmedValue() string {
+	return strings.TrimSpace(r.Value)
 }
 
 // HasChildren returns true if the record has any children.

@@ -329,7 +329,7 @@ func validateIndividuals(doc *gedcom.GedcomDocument) []*ValidationError {
 
 		sexChildren := indi.ChildrenByTag("SEX")
 		if len(sexChildren) > 0 {
-			sex := sexChildren[0].Value
+			sex := sexChildren[0].TrimmedValue()
 			validSex := map[string]bool{"M": true, "F": true, "U": true, "X": true, "N": true}
 			if sex != "" && !validSex[sex] {
 				errs = append(errs, &ValidationError{
@@ -408,7 +408,7 @@ func validateXRefs(doc *gedcom.GedcomDocument) []*ValidationError {
 	idx := doc.XRefIndex()
 
 	checkRef := func(ref *gedcom.GedcomRecord, sourceXref, refTag, family string) {
-		refValue := ref.Value
+		refValue := ref.TrimmedValue()
 		if refValue == "" {
 			return
 		}
@@ -457,12 +457,12 @@ func validateXRefs(doc *gedcom.GedcomDocument) []*ValidationError {
 	allRecords = append(allRecords, doc.Families...)
 	for _, rec := range allRecords {
 		for _, sour := range rec.ChildrenByTag("SOUR") {
-			if isXref(sour.Value) {
+			if isXref(sour.TrimmedValue()) {
 				checkRef(&sour, rec.Xref, "SOUR", familyOf(rec))
 			}
 		}
 		for _, note := range rec.ChildrenByTag("NOTE") {
-			if isXref(note.Value) {
+			if isXref(note.TrimmedValue()) {
 				checkRef(&note, rec.Xref, "NOTE", familyOf(rec))
 			}
 		}
@@ -598,7 +598,7 @@ func extractEventYear(rec gedcom.GedcomRecord, eventTag string) int {
 	if len(events) == 0 {
 		return 0
 	}
-	dateVal := events[0].ChildValue("DATE")
+	dateVal := childTrimmed(&events[0], "DATE")
 	pd := enricher.ParseDateString(dateVal)
 	if pd.Year > 0 {
 		return pd.Year

@@ -237,7 +237,7 @@ func (e *enricherState) extractIndividualData(ed *EnrichedDocument) {
 			FullName:              fullName,
 			FullNameLower:         strings.ToLower(fullName),
 			PrimarySurnameLower:   primarySurnameLower,
-			Sex:                   indi.ChildValue("SEX"),
+			Sex:                   childTrimmed(&indi, "SEX"),
 			BirthDateIndex:        -1,
 			BirthPlaceIndex:       -1,
 			DeathDateIndex:        -1,
@@ -420,8 +420,8 @@ func (e *enricherState) extractFamilyData(ed *EnrichedDocument) {
 
 		ef := EnrichedFamily{
 			Xref:               fam.Xref,
-			HusbandXref:        fam.ChildValue("HUSB"),
-			WifeXref:           fam.ChildValue("WIFE"),
+			HusbandXref:        childTrimmed(&fam, "HUSB"),
+			WifeXref:           childTrimmed(&fam, "WIFE"),
 			MarriageDateIndex:  -1,
 			MarriagePlaceIndex: -1,
 			ChildrenCount:      len(fam.ChildrenByTag("CHIL")),
@@ -466,7 +466,7 @@ func (e *enricherState) extractFamilyData(ed *EnrichedDocument) {
 		// Link family to surnames from spouses
 		linkedSurnames := make(map[int]bool)
 		for _, tag := range []string{"HUSB", "WIFE"} {
-			spouseXref := fam.ChildValue(tag)
+			spouseXref := childTrimmed(&fam, tag)
 			if spouseXref == "" {
 				continue
 			}
@@ -501,8 +501,8 @@ func (e *enricherState) createEvent(ed *EnrichedDocument, rec gedcom.GedcomRecor
 		customType = rec.ChildValue("TYPE")
 	}
 
-	dateIdx := e.getOrCreateDate(rec.ChildValue("DATE"))
-	placeIdx := e.getOrCreatePlace(rec.ChildValue("PLAC"))
+	dateIdx := e.getOrCreateDate(childTrimmed(&rec, "DATE"))
+	placeIdx := e.getOrCreatePlace(childTrimmed(&rec, "PLAC"))
 
 	evt := Event{
 		Index:      len(ed.Events),
@@ -531,8 +531,8 @@ func (e *enricherState) createAttribute(ed *EnrichedDocument, rec gedcom.GedcomR
 		customType = rec.ChildValue("TYPE")
 	}
 
-	dateIdx := e.getOrCreateDate(rec.ChildValue("DATE"))
-	placeIdx := e.getOrCreatePlace(rec.ChildValue("PLAC"))
+	dateIdx := e.getOrCreateDate(childTrimmed(&rec, "DATE"))
+	placeIdx := e.getOrCreatePlace(childTrimmed(&rec, "PLAC"))
 
 	attr := Attribute{
 		Index:         len(ed.Attributes),
@@ -552,8 +552,8 @@ func (e *enricherState) createAttribute(ed *EnrichedDocument, rec gedcom.GedcomR
 }
 
 func (e *enricherState) createResidence(ed *EnrichedDocument, rec gedcom.GedcomRecord, ownerXref, ownerType string, sortOrder int) int {
-	dateIdx := e.getOrCreateDate(rec.ChildValue("DATE"))
-	placeIdx := e.getOrCreatePlace(rec.ChildValue("PLAC"))
+	dateIdx := e.getOrCreateDate(childTrimmed(&rec, "DATE"))
+	placeIdx := e.getOrCreatePlace(childTrimmed(&rec, "PLAC"))
 
 	// ADDR substructure: prefer ADR1 child, fall back to the ADDR value itself.
 	address := ""
@@ -659,8 +659,8 @@ func (e *enricherState) buildRelationshipEdges(ed *EnrichedDocument) {
 			continue
 		}
 
-		husbXref := fam.ChildValue("HUSB")
-		wifeXref := fam.ChildValue("WIFE")
+		husbXref := childTrimmed(&fam, "HUSB")
+		wifeXref := childTrimmed(&fam, "WIFE")
 		hasHusband := husbXref != "" && indiSet[husbXref]
 		hasWife := wifeXref != "" && indiSet[wifeXref]
 
@@ -673,7 +673,7 @@ func (e *enricherState) buildRelationshipEdges(ed *EnrichedDocument) {
 
 		childRecs := fam.ChildrenByTag("CHIL")
 		for i, chilRec := range childRecs {
-			childXref := chilRec.Value
+			childXref := chilRec.TrimmedValue()
 			if childXref == "" || !indiSet[childXref] {
 				continue
 			}
@@ -853,4 +853,14 @@ func extractGivenFromFullName(fullName string) string {
 		return strings.TrimSpace(fullName)
 	}
 	return strings.TrimSpace(fullName[:idx])
+}
+
+// childTrimmed returns the trimmed value of rec's first child with the tag,
+// or "". Use it for pointers, SEX, NAME, DATE, PLAC and other code-like
+// values; text (NOTE, CONC, CONT, TEXT) is read verbatim.
+func childTrimmed(rec *gedcom.GedcomRecord, tag string) string {
+	if c := rec.FirstChildByTag(tag); c != nil {
+		return c.TrimmedValue()
+	}
+	return ""
 }

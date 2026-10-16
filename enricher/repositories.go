@@ -22,7 +22,7 @@ func (e *enricherState) extractRepositories(ed *EnrichedDocument) {
 		idx := len(ed.Repositories)
 		ed.Repositories = append(ed.Repositories, EnrichedRepository{
 			Xref:    repoRec.Xref,
-			Name:    repoRec.ChildValue("NAME"),
+			Name:    childTrimmed(&repoRec, "NAME"),
 			Address: address,
 			City:    city,
 			State:   state,

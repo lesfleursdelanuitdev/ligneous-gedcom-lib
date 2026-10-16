@@ -55,21 +55,21 @@ func ToCSVString(doc *gedcom.GedcomDocument) (string, error) {
 }
 
 func individualToCSVRow(indi gedcom.GedcomRecord, doc *gedcom.GedcomDocument, idx map[string]*gedcom.GedcomRecord) []string {
-	name := indi.ChildValue("NAME")
-	sex := indi.ChildValue("SEX")
+	name := childTrimmed(&indi, "NAME")
+	sex := childTrimmed(&indi, "SEX")
 
 	var birthDate, birthPlace, deathDate, deathPlace string
 
 	birthRecs := indi.ChildrenByTag("BIRT")
 	if len(birthRecs) > 0 {
-		birthDate = birthRecs[0].ChildValue("DATE")
-		birthPlace = birthRecs[0].ChildValue("PLAC")
+		birthDate = childTrimmed(&birthRecs[0], "DATE")
+		birthPlace = childTrimmed(&birthRecs[0], "PLAC")
 	}
 
 	deathRecs := indi.ChildrenByTag("DEAT")
 	if len(deathRecs) > 0 {
-		deathDate = deathRecs[0].ChildValue("DATE")
-		deathPlace = deathRecs[0].ChildValue("PLAC")
+		deathDate = childTrimmed(&deathRecs[0], "DATE")
+		deathPlace = childTrimmed(&deathRecs[0], "PLAC")
 	}
 
 	var fatherXref, motherXref string
@@ -79,7 +79,7 @@ func individualToCSVRow(indi gedcom.GedcomRecord, doc *gedcom.GedcomDocument, id
 		// Check if this individual is a child in this family
 		isChild := false
 		for _, chil := range fam.ChildrenByTag("CHIL") {
-			if chil.Value == indi.Xref {
+			if chil.TrimmedValue() == indi.Xref {
 				isChild = true
 				break
 			}
@@ -87,11 +87,11 @@ func individualToCSVRow(indi gedcom.GedcomRecord, doc *gedcom.GedcomDocument, id
 		if isChild {
 			husbRecs := fam.ChildrenByTag("HUSB")
 			if len(husbRecs) > 0 {
-				fatherXref = husbRecs[0].Value
+				fatherXref = husbRecs[0].TrimmedValue()
 			}
 			wifeRecs := fam.ChildrenByTag("WIFE")
 			if len(wifeRecs) > 0 {
-				motherXref = wifeRecs[0].Value
+				motherXref = wifeRecs[0].TrimmedValue()
 			}
 		}
 
@@ -99,22 +99,22 @@ func individualToCSVRow(indi gedcom.GedcomRecord, doc *gedcom.GedcomDocument, id
 		isSpouse := false
 		husbRecs := fam.ChildrenByTag("HUSB")
 		wifeRecs := fam.ChildrenByTag("WIFE")
-		if len(husbRecs) > 0 && husbRecs[0].Value == indi.Xref {
+		if len(husbRecs) > 0 && husbRecs[0].TrimmedValue() == indi.Xref {
 			isSpouse = true
 			if len(wifeRecs) > 0 {
-				spouseXrefs = append(spouseXrefs, wifeRecs[0].Value)
+				spouseXrefs = append(spouseXrefs, wifeRecs[0].TrimmedValue())
 			}
 		}
-		if len(wifeRecs) > 0 && wifeRecs[0].Value == indi.Xref {
+		if len(wifeRecs) > 0 && wifeRecs[0].TrimmedValue() == indi.Xref {
 			isSpouse = true
 			if len(husbRecs) > 0 {
-				spouseXrefs = append(spouseXrefs, husbRecs[0].Value)
+				spouseXrefs = append(spouseXrefs, husbRecs[0].TrimmedValue())
 			}
 		}
 		if isSpouse {
 			for _, chil := range fam.ChildrenByTag("CHIL") {
-				if chil.Value != "" {
-					childrenXrefs = append(childrenXrefs, chil.Value)
+				if chil.TrimmedValue() != "" {
+					childrenXrefs = append(childrenXrefs, chil.TrimmedValue())
 				}
 			}
 		}

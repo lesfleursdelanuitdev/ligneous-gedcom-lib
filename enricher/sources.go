@@ -19,7 +19,7 @@ func (e *enricherState) extractSources(ed *EnrichedDocument) {
 		repoXref := ""
 		callNumber := ""
 		if repoRef := srcRec.FirstChildByTag("REPO"); repoRef != nil {
-			repoXref = repoRef.Value
+			repoXref = repoRef.TrimmedValue()
 			callNumber = repoRef.ChildValue("CALN")
 		}
 

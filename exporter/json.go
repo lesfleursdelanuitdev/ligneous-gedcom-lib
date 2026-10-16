@@ -112,21 +112,21 @@ func convertIndividual(rec gedcom.GedcomRecord, idx map[string]*gedcom.GedcomRec
 	// Extract name components
 	nameRecs := rec.ChildrenByTag("NAME")
 	if len(nameRecs) > 0 {
-		indi.Name = nameRecs[0].Value
+		indi.Name = nameRecs[0].TrimmedValue()
 		for _, givn := range nameRecs[0].ChildrenByTag("GIVN") {
-			if givn.Value != "" {
-				indi.GivenNames = append(indi.GivenNames, givn.Value)
+			if v := givn.TrimmedValue(); v != "" {
+				indi.GivenNames = append(indi.GivenNames, v)
 			}
 		}
 		for _, surn := range nameRecs[0].ChildrenByTag("SURN") {
-			if surn.Value != "" {
-				indi.Surnames = append(indi.Surnames, surn.Value)
+			if v := surn.TrimmedValue(); v != "" {
+				indi.Surnames = append(indi.Surnames, v)
 			}
 		}
 	}
 
 	// Extract SEX
-	indi.Sex = rec.ChildValue("SEX")
+	indi.Sex = childTrimmed(&rec, "SEX")
 
 	// Extract events
 	for _, child := range rec.Children {
@@ -143,9 +143,9 @@ func convertIndividual(rec gedcom.GedcomRecord, idx map[string]*gedcom.GedcomRec
 
 	// Extract FAMC (parents)
 	for _, famc := range rec.ChildrenByTag("FAMC") {
-		if famc.Value != "" {
+		if famc.TrimmedValue() != "" {
 			indi.Parents = append(indi.Parents, DenormalizedRelationship{
-				Xref:         famc.Value,
+				Xref:         famc.TrimmedValue(),
 				Relationship: "parent",
 			})
 		}
@@ -153,9 +153,9 @@ func convertIndividual(rec gedcom.GedcomRecord, idx map[string]*gedcom.GedcomRec
 
 	// Extract FAMS (spouses)
 	for _, fams := range rec.ChildrenByTag("FAMS") {
-		if fams.Value != "" {
+		if fams.TrimmedValue() != "" {
 			indi.Spouses = append(indi.Spouses, DenormalizedRelationship{
-				Xref:         fams.Value,
+				Xref:         fams.TrimmedValue(),
 				Relationship: "spouse",
 			})
 		}
@@ -163,10 +163,10 @@ func convertIndividual(rec gedcom.GedcomRecord, idx map[string]*gedcom.GedcomRec
 
 	// Extract ASSO/RELA associations
 	for _, asso := range rec.ChildrenByTag("ASSO") {
-		if asso.Value != "" {
+		if asso.TrimmedValue() != "" {
 			indi.Associates = append(indi.Associates, DenormalizedRelationship{
-				Xref:         asso.Value,
-				Name:         resolveIndiName(asso.Value, idx),
+				Xref:         asso.TrimmedValue(),
+				Name:         resolveIndiName(asso.TrimmedValue(), idx),
 				Relationship: asso.ChildValue("RELA"),
 			})
 		}
@@ -177,8 +177,8 @@ func convertIndividual(rec gedcom.GedcomRecord, idx map[string]*gedcom.GedcomRec
 
 	// Extract SOUR references
 	for _, sour := range rec.ChildrenByTag("SOUR") {
-		if sour.Value != "" {
-			indi.Sources = append(indi.Sources, DenormalizedSourceRef{Xref: sour.Value})
+		if sour.TrimmedValue() != "" {
+			indi.Sources = append(indi.Sources, DenormalizedSourceRef{Xref: sour.TrimmedValue()})
 		}
 	}
 
@@ -197,38 +197,38 @@ func convertFamily(rec gedcom.GedcomRecord, idx map[string]*gedcom.GedcomRecord)
 
 	// Extract HUSB
 	husbRecs := rec.ChildrenByTag("HUSB")
-	if len(husbRecs) > 0 && husbRecs[0].Value != "" {
+	if len(husbRecs) > 0 && husbRecs[0].TrimmedValue() != "" {
 		fam.Husband = &DenormalizedRelationship{
-			Xref: husbRecs[0].Value,
-			Name: resolveIndiName(husbRecs[0].Value, idx),
+			Xref: husbRecs[0].TrimmedValue(),
+			Name: resolveIndiName(husbRecs[0].TrimmedValue(), idx),
 		}
 	}
 
 	// Extract WIFE
 	wifeRecs := rec.ChildrenByTag("WIFE")
-	if len(wifeRecs) > 0 && wifeRecs[0].Value != "" {
+	if len(wifeRecs) > 0 && wifeRecs[0].TrimmedValue() != "" {
 		fam.Wife = &DenormalizedRelationship{
-			Xref: wifeRecs[0].Value,
-			Name: resolveIndiName(wifeRecs[0].Value, idx),
+			Xref: wifeRecs[0].TrimmedValue(),
+			Name: resolveIndiName(wifeRecs[0].TrimmedValue(), idx),
 		}
 	}
 
 	// Extract CHIL
 	for _, chil := range rec.ChildrenByTag("CHIL") {
-		if chil.Value != "" {
+		if chil.TrimmedValue() != "" {
 			fam.Children = append(fam.Children, DenormalizedRelationship{
-				Xref: chil.Value,
-				Name: resolveIndiName(chil.Value, idx),
+				Xref: chil.TrimmedValue(),
+				Name: resolveIndiName(chil.TrimmedValue(), idx),
 			})
 		}
 	}
 
 	// Extract ASSO/RELA associations
 	for _, asso := range rec.ChildrenByTag("ASSO") {
-		if asso.Value != "" {
+		if asso.TrimmedValue() != "" {
 			fam.Associates = append(fam.Associates, DenormalizedRelationship{
-				Xref:         asso.Value,
-				Name:         resolveIndiName(asso.Value, idx),
+				Xref:         asso.TrimmedValue(),
+				Name:         resolveIndiName(asso.TrimmedValue(), idx),
 				Relationship: asso.ChildValue("RELA"),
 			})
 		}
@@ -252,8 +252,8 @@ func convertFamily(rec gedcom.GedcomRecord, idx map[string]*gedcom.GedcomRecord)
 
 	// Extract SOUR references
 	for _, sour := range rec.ChildrenByTag("SOUR") {
-		if sour.Value != "" {
-			fam.Sources = append(fam.Sources, DenormalizedSourceRef{Xref: sour.Value})
+		if sour.TrimmedValue() != "" {
+			fam.Sources = append(fam.Sources, DenormalizedSourceRef{Xref: sour.TrimmedValue()})
 		}
 	}
 
@@ -270,8 +270,8 @@ func extractEvent(rec gedcom.GedcomRecord) DenormalizedEvent {
 
 	event := DenormalizedEvent{
 		Type:  eventType,
-		Date:  rec.ChildValue("DATE"),
-		Place: rec.ChildValue("PLAC"),
+		Date:  childTrimmed(&rec, "DATE"),
+		Place: childTrimmed(&rec, "PLAC"),
 	}
 
 	if event.Date != "" {
@@ -306,7 +306,17 @@ func resolveIndiName(xref string, idx map[string]*gedcom.GedcomRecord) string {
 	if rec == nil {
 		return ""
 	}
-	return rec.ChildValue("NAME")
+	return childTrimmed(rec, "NAME")
+}
+
+// childTrimmed returns the trimmed value of rec's first child with the tag,
+// or "". Use it for pointers, SEX, NAME, DATE, PLAC and other code-like
+// values; text (NOTE, CONC, CONT, TEXT) is read verbatim.
+func childTrimmed(rec *gedcom.GedcomRecord, tag string) string {
+	if c := rec.FirstChildByTag(tag); c != nil {
+		return c.TrimmedValue()
+	}
+	return ""
 }
 
 func isEventTag(tag string) bool {

@@ -26,8 +26,16 @@ func dateSortKey(pd enricher.ParsedDate) int {
 }
 
 func parsedDateFromEventBlock(ev gedcom.GedcomRecord) enricher.ParsedDate {
-	d := ev.ChildValue("DATE")
-	return enricher.ParseDateString(d)
+	return enricher.ParseDateString(childTrimmed(&ev, "DATE"))
+}
+
+// childTrimmed returns the trimmed value of rec's first child with the tag,
+// or "". Use it for pointers, SEX, DATE and other code-like values.
+func childTrimmed(rec *gedcom.GedcomRecord, tag string) string {
+	if c := rec.FirstChildByTag(tag); c != nil {
+		return c.TrimmedValue()
+	}
+	return ""
 }
 
 // dateLine returns the line of ev's first DATE child, or ev's own line when it has none.
@@ -146,7 +154,7 @@ func firstSexValue(indi *gedcom.GedcomRecord) string {
 	if len(ss) == 0 {
 		return ""
 	}
-	return strings.TrimSpace(ss[0].Value)
+	return ss[0].TrimmedValue()
 }
 
 func validateSwappedOppositeSexSpouses(doc *gedcom.GedcomDocument, errs *[]*ValidationError) {
@@ -158,8 +166,8 @@ func validateSwappedOppositeSexSpouses(doc *gedcom.GedcomDocument, errs *[]*Vali
 		if len(hs) == 0 || len(ws) == 0 {
 			continue
 		}
-		hi := idx[hs[0].Value]
-		wi := idx[ws[0].Value]
+		hi := idx[hs[0].TrimmedValue()]
+		wi := idx[ws[0].TrimmedValue()]
 		if hi == nil || wi == nil {
 			continue
 		}
@@ -218,7 +226,7 @@ func validateMarriageAndBirthWarnings(doc *gedcom.GedcomDocument, opts *Options,
 			birthYear = birthKey / 400
 		}
 		for _, fams := range indi.ChildrenByTag("FAMS") {
-			fam := idx[fams.Value]
+			fam := idx[fams.TrimmedValue()]
 			if fam == nil {
 				continue
 			}
@@ -277,18 +285,18 @@ func validateChildVersusParentBirthWarnings(doc *gedcom.GedcomDocument, opts *Op
 
 		var husbBirth, wifeBirth int
 		if len(husbRecs) > 0 {
-			if h := idx[husbRecs[0].Value]; h != nil {
+			if h := idx[husbRecs[0].TrimmedValue()]; h != nil {
 				husbBirth = extractEventYear(*h, "BIRT")
 			}
 		}
 		if len(wifeRecs) > 0 {
-			if w := idx[wifeRecs[0].Value]; w != nil {
+			if w := idx[wifeRecs[0].TrimmedValue()]; w != nil {
 				wifeBirth = extractEventYear(*w, "BIRT")
 			}
 		}
 
 		for _, chilRef := range childRecs {
-			c := idx[chilRef.Value]
+			c := idx[chilRef.TrimmedValue()]
 			if c == nil {
 				continue
 			}
@@ -306,7 +314,7 @@ func validateChildVersusParentBirthWarnings(doc *gedcom.GedcomDocument, opts *Op
 						Message:     fmt.Sprintf("Child born in %d, father born in %d", childBirth, husbBirth),
 						Xref:        fam.Xref,
 						RelatedXref: c.Xref,
-						Details:     map[string]string{"parent": husbRecs[0].Value, "family": fam.Xref},
+						Details:     map[string]string{"parent": husbRecs[0].TrimmedValue(), "family": fam.Xref},
 						Line:        eventDateLine(c, "BIRT"),
 					})
 				} else if gap < minP {
@@ -317,7 +325,7 @@ func validateChildVersusParentBirthWarnings(doc *gedcom.GedcomDocument, opts *Op
 						Xref:        fam.Xref,
 						RelatedXref: c.Xref,
 						Details: map[string]string{
-							"parent": husbRecs[0].Value,
+							"parent": husbRecs[0].TrimmedValue(),
 							"child":  c.Xref,
 							"family": fam.Xref,
 							"age":    strconv.Itoa(gap),
@@ -332,7 +340,7 @@ func validateChildVersusParentBirthWarnings(doc *gedcom.GedcomDocument, opts *Op
 						Xref:        fam.Xref,
 						RelatedXref: c.Xref,
 						Details: map[string]string{
-							"parent": husbRecs[0].Value,
+							"parent": husbRecs[0].TrimmedValue(),
 							"child":  c.Xref,
 							"family": fam.Xref,
 							"age":    strconv.Itoa(gap),
@@ -351,7 +359,7 @@ func validateChildVersusParentBirthWarnings(doc *gedcom.GedcomDocument, opts *Op
 						Message:     fmt.Sprintf("Child born in %d, mother born in %d", childBirth, wifeBirth),
 						Xref:        fam.Xref,
 						RelatedXref: c.Xref,
-						Details:     map[string]string{"parent": wifeRecs[0].Value, "family": fam.Xref},
+						Details:     map[string]string{"parent": wifeRecs[0].TrimmedValue(), "family": fam.Xref},
 						Line:        eventDateLine(c, "BIRT"),
 					})
 				} else if gap < minP {
@@ -362,7 +370,7 @@ func validateChildVersusParentBirthWarnings(doc *gedcom.GedcomDocument, opts *Op
 						Xref:        fam.Xref,
 						RelatedXref: c.Xref,
 						Details: map[string]string{
-							"parent": wifeRecs[0].Value,
+							"parent": wifeRecs[0].TrimmedValue(),
 							"child":  c.Xref,
 							"family": fam.Xref,
 							"age":    strconv.Itoa(gap),
@@ -377,7 +385,7 @@ func validateChildVersusParentBirthWarnings(doc *gedcom.GedcomDocument, opts *Op
 						Xref:        fam.Xref,
 						RelatedXref: c.Xref,
 						Details: map[string]string{
-							"parent": wifeRecs[0].Value,
+							"parent": wifeRecs[0].TrimmedValue(),
 							"child":  c.Xref,
 							"family": fam.Xref,
 							"age":    strconv.Itoa(gap),
