@@ -86,14 +86,28 @@ Order:
    | missing | UTF-8, finding `ENCODING_UNDECLARED` |
 
 4. **Check against the bytes:**
-   - declared UTF-8 or ASCII, but not valid UTF-8 → Windows-1252, finding `ENCODING_MISLABELED`;
-   - declared ANSEL, ANSI, IBMPC or MACINTOSH, but valid UTF-8 containing at least one multi-byte sequence → UTF-8, finding `ENCODING_MISLABELED`.
+   - declared UTF-8 or ASCII (or missing, or a UTF-8 BOM), but not valid UTF-8 → the mixed rule below decides between UTF-8 with stray bytes and Windows-1252 throughout (finding `ENCODING_MISLABELED`);
+   - declared ANSEL, ANSI, IBMPC or MACINTOSH, but valid UTF-8 containing at least one multi-byte sequence → UTF-8, finding `ENCODING_MISLABELED`;
+   - declared ANSI (or an alias such as `ISO-8859-1` or `LATIN1`), not valid UTF-8, but passing the mixed rule → UTF-8 with stray bytes, finding `ENCODING_MISLABELED` (declared ANSI, detected UTF-8).
 5. **Not UTF-8 after all that** → hint `ENCODING_NOT_UTF8`, which the repair fixes.
+
+**The mixed rule.** Count the valid multi-byte UTF-8 sequences (*multi*) and the bytes that are not valid UTF-8 (*invalid*):
+- multi > 0 and multi ≥ invalid → the file is UTF-8 with a few stray bytes. A tie counts as UTF-8: a file with any valid multi-byte UTF-8 and few stray bytes is far more likely to be UTF-8.
+- Otherwise (no valid multi-byte sequence, or more invalid bytes than valid sequences) → Windows-1252 throughout. After a UTF-8 BOM, each run of invalid bytes becomes U+FFFD instead.
+
+In the mixed path each stray byte is read as Windows-1252, and the file gets one `ENCODING_STRAY_BYTES` finding (warning; `count`, `encoding`; on the first affected line). The five bytes Windows-1252 leaves undefined (0x81, 0x8D, 0x8F, 0x90, 0x9D) are unreadable, not stray: they become U+FFFD and count towards `ENCODING_BAD_BYTES` instead.
+
+**UTF-8 split across CONC.** Some exporters cut CONC lines by bytes, in the middle of a character: `1 NOTE Caf\xC3` then `2 CONC \xA9 au lait`. Before counting, invalid bytes at the end of a line that become a valid character when joined with the start of the next line's value count as one valid multi-byte sequence, not as stray bytes, provided the next line is a real continuation: `CONC` one level below the line, or `CONC` at the same level when the line is itself `CONC` or `CONT` (the same rule as the ANSEL carry-over). Each line keeps its own bytes, but the whole character is written at the start of the CONC value, so the joined note reads `Café au lait`. The repair records `moved a character split across lines onto line {n}` on the first line, where n is the CONC line.
+
+**Two codes for bytes:**
+- `ENCODING_STRAY_BYTES`: bytes in a UTF-8 file that were in another encoding and were read as Windows-1252. The repaired file keeps the letters as read, with one `converted {n} stray Windows-1252 characters to UTF-8` Change per line.
+- `ENCODING_BAD_BYTES`: bytes that could not be read at all and became U+FFFD (undefined in the file's encoding, undefined Windows-1252 bytes, ANSEL marks with no letter, lone UTF-16 surrogates). Each line gets a `replaced {n} unreadable characters with �` Change, and the code stays in `Left`.
 
 **ANSEL decoding:**
 - Use a hand-written table (ANSI/NISO Z39.47 plus the GEDCOM extensions).
 - Combining marks (bytes 0xE0–0xFE) come *before* their base letter in ANSEL. The decoder moves them after the letter and then applies Unicode NFC. That needs `golang.org/x/text/unicode/norm`.
 - Bytes that aren't in the table become U+FFFD, with finding `ENCODING_BAD_BYTES`. The finding gives the line and a count.
+- A mark at the end of a line carries over to the first letter of the next line only when that line is a real CONC continuation (see above). Otherwise it becomes U+FFFD (`ENCODING_BAD_BYTES`).
 
 **Code pages:** use `golang.org/x/text/encoding/charmap` for Windows-1252, CP437 and MacRoman. This is the library's first new dependency. **Check:** it must add under 100 KB gzipped to the WebAssembly build. If it adds more, hand-write the three 128-entry tables instead.
 
@@ -313,6 +327,7 @@ Each step is test-first and reviewed. Nothing is merged, pushed, tagged, created
 | ENCODING_MISLABELED | The file says it's {declared}, but it's really {encoding} | The header names one character set, but the letters in the file are written in another. A program that trusts the header will show accented letters as gibberish. | Download the repaired file below. Its header matches its contents. |
 | ENCODING_UNDECLARED | The file doesn't say which character set it uses | We read it as UTF-8. Another program might guess differently. | Download the repaired file below, which says UTF-8 in its header. |
 | ENCODING_BAD_BYTES | {count} characters couldn't be read | These bytes don't match any letter in the file's character set. They show as � here. The letters were probably damaged before this file was made. | Find these people in your program and retype the names or places shown with �. |
+| ENCODING_STRAY_BYTES | Some characters were in a different encoding | {count} characters were in a different encoding from the rest of the file. We've read them as best we can — check the names and places on these lines. | Look at the names and places on these lines in your program and correct any letter that looks wrong. The repaired file keeps the letters as we read them. |
 | LINE_TOO_LONG | A line is longer than GEDCOM allows | GEDCOM lines may be at most 255 characters. Some programs cut longer lines short and lose the end of the text. | The repaired file splits long notes into continuation lines. For other kinds of line, shorten the text in your program. |
 | LINE_EXCEEDS_MAX_PHYSICAL_LENGTH | A line is longer than GEDCOM allows | (same as LINE_TOO_LONG) | (same) |
 | EMPTY_LINE | Blank line | GEDCOM files shouldn't have blank lines. Most programs skip them, but a few stop reading. | The repaired file removes them. |
