@@ -114,9 +114,10 @@ func lineAt(b []byte, idx int) int {
 // alias) whose multi-byte sequences strictly outnumber its invalid bytes is
 // read the same way, with ENCODING_MISLABELED. When a file whose header
 // names a legacy encoding is read as UTF-8, LineFix.UTF8 counts its
-// multi-byte characters per line. A UTF-8 character cut in two at the end of a line and
-// finished by the next line's CONC value counts as valid; the whole
-// character moves to the start of the CONC value.
+// multi-byte characters per line. A UTF-8 character cut in two at the end
+// of a line and finished by the next line's CONC value counts as valid and
+// is joined: its continuation bytes move back onto the first line (for a
+// line that would pass 255 bytes, see splitRune).
 // Decode never fails: bytes that cannot be decoded become U+FFFD and are
 // reported in the findings.
 func Decode(raw []byte) (utf8Bytes []byte, info gedcom.EncodingInfo, findings []*ParseError) {
@@ -133,10 +134,10 @@ type LineFix struct {
 	// Unreadable is the number of U+FFFD characters Decode wrote because it
 	// could not read the bytes (U+FFFD already in the file is not counted).
 	Unreadable int
-	// Moved is the number of UTF-8 characters cut at the end of this line
-	// and finished at the start of the next line's CONC value; Decode moves
-	// each whole character to the start of that value.
-	Moved int
+	// Joined is the number of UTF-8 characters cut at the end of this line
+	// and finished at the start of the next line's CONC value, which Decode
+	// joined back into one character (see splitRune).
+	Joined int
 	// UTF8 is the number of valid multi-byte UTF-8 characters on this line
 	// in a file whose header names a legacy encoding but which was read as
 	// UTF-8 anyway (not after a byte order mark).
@@ -200,7 +201,7 @@ func lineFixes(text []byte, strayAt, fffdAt, movedAt, utf8At []int) []LineFix {
 		case 1:
 			f.Unreadable++
 		case 2:
-			f.Moved++
+			f.Joined++
 		default:
 			f.UTF8++
 		}
@@ -408,9 +409,9 @@ func utf8Counts(b []byte) (multi, invalid int) {
 		}
 		r, size := utf8.DecodeRune(b[i:])
 		if r == utf8.RuneError && size == 1 {
-			if _, v, rest, ok := splitRune(b, i); ok {
+			if sp, ok := splitRune(b, i); ok {
 				multi++
-				i = v + rest
+				i = sp.v + sp.rest
 				continue
 			}
 			invalid++
@@ -423,8 +424,8 @@ func utf8Counts(b []byte) (multi, invalid int) {
 }
 
 // mixed decodes b as UTF-8 and reads each byte that is not valid UTF-8 as
-// Windows-1252, except a character split across a CONC line, which moves
-// whole to the start of the CONC value. It reports ENCODING_STRAY_BYTES (count = bytes converted) on
+// Windows-1252, except a character split across a CONC line, which is
+// joined into one character (see splitRune). It reports ENCODING_STRAY_BYTES (count = bytes converted) on
 // the first affected line. A byte that Windows-1252 leaves undefined becomes
 // U+FFFD instead and is reported as ENCODING_BAD_BYTES.
 func (d *decoder) mixed(b []byte) []byte {
@@ -432,18 +433,23 @@ func (d *decoder) mixed(b []byte) []byte {
 	for i := 0; i < len(b); {
 		r, size := utf8.DecodeRune(b[i:])
 		if r == utf8.RuneError && size == 1 {
-			if e, v, rest, ok := splitRune(b, i); ok {
+			if sp, ok := splitRune(b, i); ok {
 				// The line ends in the first bytes of a character that the
-				// CONC value finishes: write the whole character at the
-				// start of the value, so the joined text is unchanged.
+				// CONC value finishes: write the whole character on one of
+				// the two lines, so the joined text is unchanged.
 				d.movedAt = append(d.movedAt, len(out))
-				out = append(out, b[e:v]...)
+				if !sp.back {
+					out = append(out, b[sp.e:sp.v]...)
+				}
 				if d.recordUTF8 {
 					d.utf8At = append(d.utf8At, len(out))
 				}
-				out = append(out, b[i:e]...)
-				out = append(out, b[v:v+rest]...)
-				i = v + rest
+				out = append(out, b[i:sp.e]...)
+				out = append(out, b[sp.v:sp.v+sp.rest]...)
+				if sp.back {
+					out = append(out, b[sp.e:sp.v]...)
+				}
+				i = sp.v + sp.rest
 				continue
 			}
 			if c := charmap.Windows1252.DecodeByte(b[i]); c != utf8.RuneError {

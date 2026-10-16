@@ -272,7 +272,7 @@ func TestDecodeANSELMarkConcLevel(t *testing.T) {
 
 // UTF-8 characters cut across a CONC line by an exporter that splits lines
 // by bytes. The pair counts as one valid multi-byte sequence, so the file
-// stays UTF-8; the whole character moves to the start of the CONC value.
+// stays UTF-8; the continuation bytes move back onto the first line.
 func TestDecodeUTF8SplitAcrossConc(t *testing.T) {
 	cases := []struct {
 		file  string
@@ -280,9 +280,9 @@ func TestDecodeUTF8SplitAcrossConc(t *testing.T) {
 		fixes []LineFix
 		codes []string
 	}{
-		{"conc-split-utf8-few.ged", "1 NOTE Caf\r\n2 CONC é au lait\r\n", []LineFix{{Line: 7, Moved: 1}}, []string{}},
-		{"conc-split-utf8-many.ged", "1 NOTE Caf\r\n2 CONC é au lait\r\n1 NOTE Prix 10\r\n2 CONC €, payé\r\n",
-			[]LineFix{{Line: 9, Moved: 1}, {Line: 11, Moved: 1}}, []string{}},
+		{"conc-split-utf8-few.ged", "1 NOTE Café\r\n2 CONC  au lait\r\n", []LineFix{{Line: 7, Joined: 1}}, []string{}},
+		{"conc-split-utf8-many.ged", "1 NOTE Café\r\n2 CONC  au lait\r\n1 NOTE Prix 10€\r\n2 CONC , payé\r\n",
+			[]LineFix{{Line: 9, Joined: 1}, {Line: 11, Joined: 1}}, []string{}},
 	}
 	for _, c := range cases {
 		t.Run(c.file, func(t *testing.T) {
@@ -408,4 +408,85 @@ func TestDecodeDeclaredLegacyReadAsUTF8Lines(t *testing.T) {
 	if info.Detected != "UTF-8" || !reflect.DeepEqual(fixes, []LineFix{{Line: 4, Stray: 1}}) {
 		t.Errorf("undeclared: Detected %s, fixes %+v", info.Detected, fixes)
 	}
+}
+
+// Item 3-2: a split character is joined by moving its continuation bytes
+// back onto the first line, for every line ending and sequence length, so
+// a space before it survives once CONC is joined.
+func TestDecodeUTF8SplitJoinsBack(t *testing.T) {
+	const head = "0 HEAD\n1 CHAR UTF-8\n0 @I1@ INDI\n"
+	cases := []struct{ name, in, want string }{
+		{"Prix, CRLF", "1 NOTE Prix 10 \xE2\x82\r\n2 CONC \xAC ok\r\n", "1 NOTE Prix 10 €\r\n2 CONC  ok\r\n"},
+		{"2-byte, LF", "1 NOTE Caf\xC3\n2 CONC \xA9 au lait\n", "1 NOTE Café\n2 CONC  au lait\n"},
+		{"2-byte, CR", "1 NOTE Caf\xC3\r2 CONC \xA9 au lait\r", "1 NOTE Café\r2 CONC  au lait\r"},
+		{"Émile", "1 NOTE Jean \xC3\r\n2 CONC \x89mile\r\n", "1 NOTE Jean É\r\n2 CONC mile\r\n"},
+		{"3-byte 1|2", "1 NOTE x\xE2\r\n2 CONC \x82\xACy\r\n", "1 NOTE x€\r\n2 CONC y\r\n"},
+		{"3-byte 2|1, LF", "1 NOTE x\xE2\x82\n2 CONC \xACy\n", "1 NOTE x€\n2 CONC y\n"},
+		{"4-byte 1|3", "1 NOTE x\xF0\r\n2 CONC \x9F\x98\x80y\r\n", "1 NOTE x😀\r\n2 CONC y\r\n"},
+		{"4-byte 2|2, CR", "1 NOTE x\xF0\x9F\r2 CONC \x98\x80y\r", "1 NOTE x😀\r2 CONC y\r"},
+		{"4-byte 3|1", "1 NOTE x\xF0\x9F\x98\n2 CONC \x80y\n", "1 NOTE x😀\n2 CONC y\n"},
+		{"after CONC at the same level", "1 NOTE a\n2 CONC b\xC3\n2 CONC \xA9c\n", "1 NOTE a\n2 CONC bé\n2 CONC c\n"},
+		{"whole value", "1 NOTE x\xC3\n2 CONC \xA9\n", "1 NOTE xé\n2 CONC \n"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			out, info, fs, fixes := DecodeReport([]byte(head + c.in + "0 TRLR\n"))
+			if want := head + c.want + "0 TRLR\n"; string(out) != want {
+				t.Errorf("decoded:\n%q\nwant\n%q", out, want)
+			}
+			if info.Detected != "UTF-8" || len(fs) != 0 {
+				t.Errorf("info %+v codes %v", info, codes(fs))
+			}
+			if len(fixes) != 1 || fixes[0].Joined != 1 || fixes[0].Stray+fixes[0].Unreadable != 0 {
+				t.Errorf("fixes = %+v", fixes)
+			}
+		})
+	}
+}
+
+// longLine is a NOTE line of n bytes (without its terminator) whose last
+// byte is lead and whose byte before that is before.
+func longLine(n int, before, lead byte) string {
+	return "1 NOTE " + strings.Repeat("x", n-len("1 NOTE ")-2) + string([]byte{before, lead})
+}
+
+// If joining back would push the first line over 255 bytes, the lead moves
+// forward when no whitespace precedes it; otherwise nothing is joined and
+// the bytes are stray, recorded as such.
+func TestDecodeUTF8SplitLongLine(t *testing.T) {
+	const head = "0 HEAD\n1 CHAR UTF-8\n0 @I1@ INDI\n1 NAME Renée /Dupré/\n2 PLAC Zürich\n"
+	t.Run("forward", func(t *testing.T) {
+		first := longLine(254, 'x', 0xE2)
+		out, _, fs, fixes := DecodeReport([]byte(head + first + "\n2 CONC \x82\xACy\n0 TRLR\n"))
+		want := head + first[:253] + "\n2 CONC €y\n0 TRLR\n"
+		if string(out) != want {
+			t.Errorf("decoded:\n%q\nwant\n%q", out, want)
+		}
+		if len(fs) != 0 || !reflect.DeepEqual(fixes, []LineFix{{Line: 6, Joined: 1}}) {
+			t.Errorf("codes %v fixes %+v", codes(fs), fixes)
+		}
+	})
+	t.Run("join back fits at 255", func(t *testing.T) {
+		first := longLine(254, ' ', 0xC3)
+		out, _, _, fixes := DecodeReport([]byte(head + first + "\n2 CONC \xA9y\n0 TRLR\n"))
+		if want := head + first[:253] + "é\n2 CONC y\n0 TRLR\n"; string(out) != want {
+			t.Errorf("decoded:\n%q\nwant\n%q", out, want)
+		}
+		if !reflect.DeepEqual(fixes, []LineFix{{Line: 6, Joined: 1}}) {
+			t.Errorf("fixes %+v", fixes)
+		}
+	})
+	t.Run("whitespace before the lead: no join", func(t *testing.T) {
+		first := longLine(254, ' ', 0xE2)
+		out, _, fs, fixes := DecodeReport([]byte(head + first + "\n2 CONC \x82\xACy\n0 TRLR\n"))
+		if want := head + first[:253] + "â\n2 CONC ‚¬y\n0 TRLR\n"; string(out) != want {
+			t.Errorf("decoded:\n%q\nwant\n%q", out, want)
+		}
+		if f := strayFinding(t, fs); f.Details["count"] != "3" || f.Line != 6 {
+			t.Errorf("stray = line %d %v", f.Line, f.Details)
+		}
+		if want := []LineFix{{Line: 6, Stray: 1}, {Line: 7, Stray: 2}}; !reflect.DeepEqual(fixes, want) {
+			t.Errorf("fixes = %+v, want %+v", fixes, want)
+		}
+	})
 }

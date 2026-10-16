@@ -8,7 +8,7 @@
 //     in a UTF-8 file with a few stray bytes only those bytes are converted
 //     (one Change per line), every line where decoding wrote U+FFFD gets
 //     a Change too, and so does a line whose last UTF-8 character was cut
-//     in two by a CONC split (the whole character moves to the CONC line);
+//     in two by a CONC split (the character is joined into one);
 //   - turn bare "\r" line endings into "\r\n", keeping "\n" and "\r\n" as they are;
 //   - remove blank lines;
 //   - remove spaces and tabs before the level number (only on lines that
@@ -86,7 +86,7 @@ const (
 	whatBOM        = "removed the byte order mark"
 	whatStray      = "converted %d stray Windows-1252 characters to UTF-8"
 	whatUnreadable = "replaced %d unreadable characters with \uFFFD"
-	whatMoved      = "moved a character split across lines onto line %d"
+	whatJoined     = "joined a character split across lines %d and %d"
 	whatReadUTF8   = "read %d characters as UTF-8 (the header said %s)"
 )
 
@@ -136,8 +136,8 @@ func Repair(data []byte) (*Result, error) {
 		changes = append(changes, Change{0, whatBOM})
 	}
 	// What decoding did to single lines: stray bytes in a UTF-8 file read as
-	// Windows-1252, unreadable bytes written as U+FFFD, and characters split
-	// across a CONC line moved onto it.
+	// Windows-1252, unreadable bytes written as U+FFFD, characters split
+	// across a CONC line joined, and lines read as UTF-8 against the header.
 	unreadable, readUTF8 := false, false
 	for _, f := range fixes {
 		if f.UTF8 > 0 { // the header named a legacy encoding
@@ -151,8 +151,8 @@ func Repair(data []byte) (*Result, error) {
 			unreadable = true
 			changes = append(changes, Change{f.Line, fmt.Sprintf(whatUnreadable, f.Unreadable)})
 		}
-		if f.Moved > 0 { // the CONC line is the next one
-			changes = append(changes, Change{f.Line, fmt.Sprintf(whatMoved, f.Line+1)})
+		if f.Joined > 0 { // the CONC line is the next one
+			changes = append(changes, Change{f.Line, fmt.Sprintf(whatJoined, f.Line, f.Line+1)})
 		}
 	}
 

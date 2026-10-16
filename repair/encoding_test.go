@@ -194,10 +194,10 @@ func TestRepairMixedRuleFixtures(t *testing.T) {
 		changes []Change // exactly
 		notes   []string // enriched JSON must contain these
 	}{
-		{"conc-split-utf8-few.ged", "1 NAME Jean /Dupont/\r\n1 NOTE Caf\r\n2 CONC é au lait\r\n",
-			[]Change{{7, "moved a character split across lines onto line 8"}}, []string{`"Café au lait"`}},
-		{"conc-split-utf8-many.ged", "1 NOTE Caf\r\n2 CONC é au lait\r\n1 NOTE Prix 10\r\n2 CONC €, payé\r\n",
-			[]Change{{9, "moved a character split across lines onto line 10"}, {11, "moved a character split across lines onto line 12"}},
+		{"conc-split-utf8-few.ged", "1 NAME Jean /Dupont/\r\n1 NOTE Café\r\n2 CONC  au lait\r\n",
+			[]Change{{7, "joined a character split across lines 7 and 8"}}, []string{`"Café au lait"`}},
+		{"conc-split-utf8-many.ged", "1 NOTE Café\r\n2 CONC  au lait\r\n1 NOTE Prix 10€\r\n2 CONC , payé\r\n",
+			[]Change{{9, "joined a character split across lines 9 and 10"}, {11, "joined a character split across lines 11 and 12"}},
 			[]string{`"Café au lait"`, `"Prix 10€, payé"`, `"Renée /Dupré/"`, `"Zürich"`}},
 		{"utf8-tie.ged", "1 NAME Renée /Dupont/\r\n1 NOTE ét\r\n",
 			[]Change{{7, "converted 1 stray Windows-1252 characters to UTF-8"}}, []string{`"ét"`, `"Renée /Dupont/"`}},
@@ -273,5 +273,54 @@ func TestRepairLegacyTieAndMajority(t *testing.T) {
 			{9, "converted 1 stray Windows-1252 characters to UTF-8"},
 		})
 		assertLeftHas(t, res, "ENCODING_MISLABELED", true)
+	})
+}
+
+// Item 3-2 in the repair: the joined character keeps the space before it,
+// the Change names both lines, and the enriched note reads right.
+func TestRepairUTF8SplitJoinsBack(t *testing.T) {
+	const head = "0 HEAD\r\n1 GEDC\r\n2 VERS 5.5.1\r\n1 CHAR UTF-8\r\n0 @I1@ INDI\r\n1 NAME A /B/\r\n"
+	cases := []struct{ name, in, data, note string }{
+		{"Prix", "1 NOTE Prix 10 \xE2\x82\r\n2 CONC \xAC ok\r\n", "1 NOTE Prix 10 €\r\n2 CONC  ok\r\n", `"Prix 10 € ok"`},
+		{"Émile", "1 NOTE Jean \xC3\r\n2 CONC \x89mile\r\n", "1 NOTE Jean É\r\n2 CONC mile\r\n", `"Jean Émile"`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			raw := []byte(head + c.in + "0 TRLR\r\n")
+			res, err := Repair(raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := head + c.data + "0 TRLR\r\n"; string(res.Data) != want {
+				t.Errorf("Data:\n%q\nwant\n%q", res.Data, want)
+			}
+			assertChanges(t, res.Changes, []Change{{7, "joined a character split across lines 7 and 8"}})
+			if got := enrichedJSON(t, res.Data); !strings.Contains(got, c.note) {
+				t.Errorf("enriched note is not %s:\n%s", c.note, got)
+			}
+			if a, b := enrichedJSON(t, raw), enrichedJSON(t, res.Data); a != b {
+				t.Errorf("enriched content changed:\n%s", firstDiff(a, b))
+			}
+		})
+	}
+}
+
+// No join when the first line would grow past 255 bytes and a space comes
+// before the lead: the bytes are stray, with one Change per line and
+// nothing silent.
+func TestRepairUTF8SplitNoJoinIsRecorded(t *testing.T) {
+	first := "1 NOTE " + strings.Repeat("x", 245) + " \xE2" // 254 bytes
+	in := "0 HEAD\r\n1 GEDC\r\n2 VERS 5.5.1\r\n1 CHAR UTF-8\r\n0 @I1@ INDI\r\n1 NAME Renée /Dupré/\r\n2 PLAC Zürich\r\n" +
+		first + "\r\n2 CONC \x82\xACy\r\n0 TRLR\r\n"
+	res, err := Repair([]byte(in))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(res.Data), first[:253]+"â\r\n2 CONC ‚¬y\r\n") {
+		t.Errorf("Data %q", res.Data)
+	}
+	assertChanges(t, res.Changes, []Change{
+		{8, "converted 1 stray Windows-1252 characters to UTF-8"},
+		{9, "converted 2 stray Windows-1252 characters to UTF-8"},
 	})
 }

@@ -105,13 +105,30 @@ func concNext(cur, rest []byte) int {
 	return 0
 }
 
+// maxLineBytes is the GEDCOM limit for a line, in bytes, without its
+// terminator.
+const maxLineBytes = 255
+
+// split is a UTF-8 character cut at the end of a line (lead bytes b[i:e])
+// and finished by the first rest bytes of the next line's CONC value at v.
+type split struct {
+	e, v, rest int
+	// back: join by moving the rest bytes back onto the first line, which
+	// then ends with the whole character. Otherwise the lead bytes move
+	// forward to the start of the CONC value.
+	back bool
+}
+
 // splitRune reports whether b[i], a byte that is not valid UTF-8 where it
 // stands, starts a UTF-8 character cut at the end of its line and finished
 // by the first bytes of the next line's value, that line being a CONC
 // continuation of this one (concNext). Some exporters cut CONC lines by
-// bytes. It returns the end of the line e, the offset v of the CONC value
-// and the number of value bytes, rest, that finish the character.
-func splitRune(b []byte, i int) (e, v, rest int, ok bool) {
+// bytes. The character is joined back onto the first line when that line
+// stays within 255 bytes; otherwise forward onto the CONC line when no
+// whitespace precedes the lead (so the first line does not end in a space a
+// reader would trim); otherwise it is not joined (ok is false) and the bytes
+// are read as stray or unreadable.
+func splitRune(b []byte, i int) (s split, ok bool) {
 	var need int
 	switch c := b[i]; {
 	case c >= 0xC2 && c <= 0xDF:
@@ -121,32 +138,37 @@ func splitRune(b []byte, i int) (e, v, rest int, ok bool) {
 	case c >= 0xF0 && c <= 0xF4:
 		need = 4
 	default:
-		return 0, 0, 0, false
+		return s, false
 	}
-	e = i + 1
+	e := i + 1
 	for e < len(b) && e-i < need && b[e] >= 0x80 && b[e] <= 0xBF {
 		e++
 	}
 	if e >= len(b) || e-i >= need || (b[e] != '\r' && b[e] != '\n') {
-		return 0, 0, 0, false
+		return s, false
 	}
 	next := e + 1
 	if b[e] == '\r' && next < len(b) && b[next] == '\n' {
 		next++
 	}
-	n := concNext(b[lineStart(b, i):i], b[next:])
+	start := lineStart(b, i)
+	n := concNext(b[start:i], b[next:])
 	if n == 0 {
-		return 0, 0, 0, false
+		return s, false
 	}
-	v, rest = next+n, need-(e-i)
+	v, rest := next+n, need-(e-i)
 	if v+rest > len(b) {
-		return 0, 0, 0, false
+		return s, false
 	}
 	var buf [utf8.UTFMax]byte
 	k := copy(buf[:], b[i:e])
 	copy(buf[k:], b[v:v+rest])
 	if r, size := utf8.DecodeRune(buf[:need]); r == utf8.RuneError || size != need {
-		return 0, 0, 0, false
+		return s, false
 	}
-	return e, v, rest, true
+	s = split{e: e, v: v, rest: rest, back: e-start+rest <= maxLineBytes}
+	if !s.back && i > start && (b[i-1] == ' ' || b[i-1] == '\t') {
+		return split{}, false
+	}
+	return s, true
 }
