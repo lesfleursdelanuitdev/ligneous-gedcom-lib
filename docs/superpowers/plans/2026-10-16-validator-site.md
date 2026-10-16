@@ -240,6 +240,7 @@
   - The list shows "Line N: what" for each change, and just "what" when N is 0.
   - Then the counts before and after.
   - Then the button. It makes a `Blob` with type `text/plain;charset=utf-8` and saves it under `downloadName(…,'repaired')`.
+  - When `summary.gedcomVersion` is exactly `5.5` (not 5.5.1), add under the button: `Your file is GEDCOM 5.5, which doesn't officially list UTF-8. Almost every program reads it anyway.`
   - Then the "These need fixing…" list: the `left` codes mapped to catalog titles, with their counts from the current result.
 
 - [ ] **Step 1: Write the failing tests:**
