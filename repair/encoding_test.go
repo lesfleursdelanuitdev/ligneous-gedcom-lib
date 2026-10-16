@@ -202,9 +202,11 @@ func TestRepairMixedRuleFixtures(t *testing.T) {
 		{"utf8-tie.ged", "1 NAME Renée /Dupont/\r\n1 NOTE ét\r\n",
 			[]Change{{7, "converted 1 stray Windows-1252 characters to UTF-8"}}, []string{`"ét"`, `"Renée /Dupont/"`}},
 		{"ansi-declared-utf8.ged", "1 CHAR UTF-8\r\n0 @I1@ INDI\r\n1 NAME Renée /Dupré/\r\n1 NOTE Café au lait\r\n",
-			[]Change{{4, "set the character set to UTF-8"}, {7, "converted 1 stray Windows-1252 characters to UTF-8"}},
+			[]Change{{4, "set the character set to UTF-8"}, {6, "read 2 characters as UTF-8 (the header said ANSI)"},
+				{7, "converted 1 stray Windows-1252 characters to UTF-8"}},
 			[]string{`"Café au lait"`, `"Renée /Dupré/"`}},
 	}
+	mislabeled := map[string]bool{"ansi-declared-utf8.ged": true} // read as UTF-8 against the header
 	for _, c := range cases {
 		t.Run(c.file, func(t *testing.T) {
 			res, _ := repairFixture(t, "encodings/"+c.file)
@@ -212,9 +214,10 @@ func TestRepairMixedRuleFixtures(t *testing.T) {
 				t.Errorf("Data %q lacks %q", res.Data, c.data)
 			}
 			assertChanges(t, res.Changes, c.changes)
-			for _, code := range []string{"ENCODING_NOT_UTF8", "ENCODING_MISLABELED", "ENCODING_BAD_BYTES", "ENCODING_STRAY_BYTES"} {
+			for _, code := range []string{"ENCODING_NOT_UTF8", "ENCODING_BAD_BYTES", "ENCODING_STRAY_BYTES"} {
 				assertLeftHas(t, res, code, false)
 			}
+			assertLeftHas(t, res, "ENCODING_MISLABELED", mislabeled[c.file])
 			got := enrichedJSON(t, res.Data)
 			for _, s := range c.notes {
 				if !strings.Contains(got, s) {
@@ -226,4 +229,49 @@ func TestRepairMixedRuleFixtures(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Item 3-1. A declared-ANSI tie stays Windows-1252, so "CAFÉ”" is not
+// re-read as "CAFɔ"; the same without CHAR. A declared-ANSI file with a
+// strict UTF-8 majority is read as UTF-8, and every line holding UTF-8 says
+// so, with ENCODING_MISLABELED left.
+func TestRepairLegacyTieAndMajority(t *testing.T) {
+	const body = "0 @I1@ INDI\r\n1 NAME Ren\xE9e /X/\r\n1 NOTE CAF\xC9\x94\r\n0 TRLR\r\n"
+	for name, head := range map[string]string{"declared ANSI": "0 HEAD\r\n1 CHAR ANSI\r\n", "no CHAR": "0 HEAD\r\n"} {
+		t.Run(name, func(t *testing.T) {
+			res, err := Repair([]byte(head + body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(res.Data), "1 NAME Renée /X/\r\n1 NOTE CAFÉ”\r\n") {
+				t.Errorf("Data %q", res.Data)
+			}
+			if len(res.Changes) == 0 || res.Changes[0] != (Change{0, "converted from Windows-1252 to UTF-8"}) {
+				t.Errorf("Changes %v", res.Changes)
+			}
+			for _, c := range res.Changes {
+				if strings.Contains(c.What, "stray") || strings.Contains(c.What, "as UTF-8 (") {
+					t.Errorf("unexpected Change %v", c)
+				}
+			}
+		})
+	}
+	t.Run("declared ANSI, three UTF-8 characters and one stray", func(t *testing.T) {
+		in := "0 HEAD\r\n1 GEDC\r\n2 VERS 5.5.1\r\n1 CHAR ANSI\r\n0 @I1@ INDI\r\n1 NAME Ren\xC3\xA9e /Dupr\xC3\xA9/\r\n1 BIRT\r\n2 PLAC Z\xC3\xBCrich\r\n1 NOTE Caf\xE9\r\n0 TRLR\r\n"
+		res, err := Repair([]byte(in))
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := "0 HEAD\r\n1 GEDC\r\n2 VERS 5.5.1\r\n1 CHAR UTF-8\r\n0 @I1@ INDI\r\n1 NAME Renée /Dupré/\r\n1 BIRT\r\n2 PLAC Zürich\r\n1 NOTE Café\r\n0 TRLR\r\n"
+		if string(res.Data) != want {
+			t.Errorf("Data:\n%q\nwant\n%q", res.Data, want)
+		}
+		assertChanges(t, res.Changes, []Change{
+			{4, "set the character set to UTF-8"},
+			{6, "read 2 characters as UTF-8 (the header said ANSI)"},
+			{8, "read 1 characters as UTF-8 (the header said ANSI)"},
+			{9, "converted 1 stray Windows-1252 characters to UTF-8"},
+		})
+		assertLeftHas(t, res, "ENCODING_MISLABELED", true)
+	})
 }

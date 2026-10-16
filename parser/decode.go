@@ -105,13 +105,16 @@ func lineAt(b []byte, idx int) int {
 // a byte order mark, the UTF-16 byte pattern and HEAD.CHAR, then checks the
 // choice against the bytes. A file meant to be UTF-8 (by its byte order mark,
 // its CHAR or no CHAR) that has a few invalid bytes is still read as UTF-8
-// when it has valid multi-byte sequences and at least as many of them as
-// invalid bytes; each invalid byte is then read as Windows-1252
+// when its valid multi-byte sequences outnumber the invalid bytes (or equal
+// them, when the file declares UTF-8 or has a UTF-8 byte order mark); each
+// invalid byte is then read as Windows-1252
 // (ENCODING_STRAY_BYTES), or becomes U+FFFD when Windows-1252 leaves it
 // undefined (ENCODING_BAD_BYTES). Otherwise such a file is read as
 // Windows-1252 throughout (ENCODING_MISLABELED). A file declared ANSI (or an
-// alias) whose bytes pass the same test is read the same way, with
-// ENCODING_MISLABELED. A UTF-8 character cut in two at the end of a line and
+// alias) whose multi-byte sequences strictly outnumber its invalid bytes is
+// read the same way, with ENCODING_MISLABELED. When a file whose header
+// names a legacy encoding is read as UTF-8, LineFix.UTF8 counts its
+// multi-byte characters per line. A UTF-8 character cut in two at the end of a line and
 // finished by the next line's CONC value counts as valid; the whole
 // character moves to the start of the CONC value.
 // Decode never fails: bytes that cannot be decoded become U+FFFD and are
@@ -134,6 +137,10 @@ type LineFix struct {
 	// and finished at the start of the next line's CONC value; Decode moves
 	// each whole character to the start of that value.
 	Moved int
+	// UTF8 is the number of valid multi-byte UTF-8 characters on this line
+	// in a file whose header names a legacy encoding but which was read as
+	// UTF-8 anyway (not after a byte order mark).
+	UTF8 int
 }
 
 // DecodeReport is Decode plus, in line order, every line where a stray byte
@@ -144,8 +151,8 @@ func DecodeReport(raw []byte) (utf8Bytes []byte, info gedcom.EncodingInfo, findi
 	for _, f := range findings { // Detected is final only now
 		f.Details["encoding"] = info.Detected
 	}
-	if len(d.strayAt) > 0 || len(d.fffdAt) > 0 || len(d.movedAt) > 0 {
-		fixes = lineFixes(utf8Bytes, d.strayAt, d.fffdAt, d.movedAt)
+	if len(d.strayAt) > 0 || len(d.fffdAt) > 0 || len(d.movedAt) > 0 || len(d.utf8At) > 0 {
+		fixes = lineFixes(utf8Bytes, d.strayAt, d.fffdAt, d.movedAt, d.utf8At)
 	}
 	return utf8Bytes, info, findings, fixes
 }
@@ -158,13 +165,18 @@ type decoder struct {
 	// converted from a stray byte, of each U+FFFD written by the decoder, and
 	// of each line end from which a split UTF-8 character was moved.
 	strayAt, fffdAt, movedAt []int
+	// utf8At holds the output offset of each valid multi-byte character
+	// when the header names a legacy encoding but the file is read as UTF-8
+	// (recordUTF8).
+	utf8At     []int
+	recordUTF8 bool
 }
 
 // lineFixes turns output offsets into per-line counts, in line order.
-func lineFixes(text []byte, strayAt, fffdAt, movedAt []int) []LineFix {
+func lineFixes(text []byte, strayAt, fffdAt, movedAt, utf8At []int) []LineFix {
 	type event struct{ at, kind int }
-	events := make([]event, 0, len(strayAt)+len(fffdAt)+len(movedAt))
-	for k, list := range [][]int{strayAt, fffdAt, movedAt} {
+	events := make([]event, 0, len(strayAt)+len(fffdAt)+len(movedAt)+len(utf8At))
+	for k, list := range [][]int{strayAt, fffdAt, movedAt, utf8At} {
 		for _, at := range list {
 			events = append(events, event{at, k})
 		}
@@ -187,8 +199,10 @@ func lineFixes(text []byte, strayAt, fffdAt, movedAt []int) []LineFix {
 			f.Stray++
 		case 1:
 			f.Unreadable++
-		default:
+		case 2:
 			f.Moved++
+		default:
+			f.UTF8++
 		}
 	}
 	return fixes
@@ -275,9 +289,11 @@ func (d *decoder) run(raw []byte) ([]byte, gedcom.EncodingInfo, []*ParseError) {
 		if utf8.Valid(raw) && hasHigh(raw) {
 			d.info.Detected, d.info.Reason = "UTF-8", "bytes are valid UTF-8"
 			d.add(CodeEncodingMislabeled, "header says CHAR "+d.info.Declared+" but the bytes are valid UTF-8", nil)
+			d.utf8At = multiByteOffsets(raw)
 			return raw, d.info, d.findings
 		}
-		if kind == kindANSI && mostlyUTF8(raw) {
+		if kind == kindANSI && utf8Majority(raw, false) {
+			d.recordUTF8 = true
 			d.info.Detected, d.info.Reason = "UTF-8", "bytes are mostly UTF-8"
 			d.add(CodeEncodingMislabeled, "header says CHAR "+d.info.Declared+" but the bytes are mostly UTF-8", nil)
 			return d.mixed(raw), d.info, d.findings
@@ -296,7 +312,7 @@ func (d *decoder) run(raw []byte) ([]byte, gedcom.EncodingInfo, []*ParseError) {
 		}
 		return raw, d.info, d.findings
 	}
-	if mostlyUTF8(raw) {
+	if utf8Majority(raw, kind == kindUTF8) {
 		// Mostly UTF-8 with a few stray bytes: keep the UTF-8.
 		d.info.Detected = "UTF-8"
 		return d.mixed(raw), d.info, d.findings
@@ -329,7 +345,7 @@ func (d *decoder) bomUTF8(body []byte) ([]byte, gedcom.EncodingInfo, []*ParseErr
 	if utf8.Valid(body) {
 		return body, d.info, d.findings
 	}
-	if mostlyUTF8(body) {
+	if utf8Majority(body, true) {
 		return d.mixed(body), d.info, d.findings
 	}
 	// Each run of invalid bytes becomes one U+FFFD.
@@ -355,13 +371,30 @@ func (d *decoder) bomUTF8(body []byte) ([]byte, gedcom.EncodingInfo, []*ParseErr
 	return out, d.info, d.findings
 }
 
-// mostlyUTF8 reports whether b, which is not valid UTF-8, is still read as
-// UTF-8 with a few stray bytes: it has a valid multi-byte sequence and at
-// least as many of them as invalid bytes. A file with any valid multi-byte
-// UTF-8 and few stray bytes is far more likely to be UTF-8 than not.
-func mostlyUTF8(b []byte) bool {
+// utf8Majority reports whether b, which is not valid UTF-8, is still read as
+// UTF-8 with a few stray bytes: its valid multi-byte sequences outnumber its
+// invalid bytes. tie lets an equal count win too; it is for files that
+// declare UTF-8 or start with a UTF-8 byte order mark, where a few stray
+// bytes are far more likely than a whole file in another encoding.
+func utf8Majority(b []byte, tie bool) bool {
 	multi, invalid := utf8Counts(b)
-	return multi > 0 && multi >= invalid
+	return multi > invalid || (tie && multi > 0 && multi == invalid)
+}
+
+// multiByteOffsets returns the offset of every multi-byte character in b,
+// which is valid UTF-8.
+func multiByteOffsets(b []byte) []int {
+	var at []int
+	for i := 0; i < len(b); {
+		if b[i] < utf8.RuneSelf {
+			i++
+			continue
+		}
+		_, size := utf8.DecodeRune(b[i:])
+		at = append(at, i)
+		i += size
+	}
+	return at
 }
 
 // utf8Counts returns the number of valid multi-byte UTF-8 sequences in b and
@@ -405,6 +438,9 @@ func (d *decoder) mixed(b []byte) []byte {
 				// start of the value, so the joined text is unchanged.
 				d.movedAt = append(d.movedAt, len(out))
 				out = append(out, b[e:v]...)
+				if d.recordUTF8 {
+					d.utf8At = append(d.utf8At, len(out))
+				}
 				out = append(out, b[i:e]...)
 				out = append(out, b[v:v+rest]...)
 				i = v + rest
@@ -419,6 +455,9 @@ func (d *decoder) mixed(b []byte) []byte {
 			}
 			i++
 			continue
+		}
+		if d.recordUTF8 && size > 1 {
+			d.utf8At = append(d.utf8At, len(out))
 		}
 		out = append(out, b[i:i+size]...)
 		i += size

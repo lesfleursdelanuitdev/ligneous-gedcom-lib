@@ -352,3 +352,60 @@ func TestDecodeDeclaredANSIMostlyUTF8(t *testing.T) {
 		t.Errorf("plain ANSI: info %+v codes %v", info, codes(fs))
 	}
 }
+
+// Item 3-1: a tie counts as UTF-8 only when the file declares UTF-8 or has a
+// UTF-8 byte order mark. A declared-legacy or undeclared file needs strictly
+// more valid multi-byte sequences than invalid bytes.
+func TestDecodeTieByDeclaration(t *testing.T) {
+	const body = "0 @I1@ INDI\r\n1 NAME Ren\xE9e /X/\r\n1 NOTE CAF\xC9\x94\r\n0 TRLR\r\n"
+	cases := []struct {
+		name, head, detected string
+		text                 string
+	}{
+		{"declared ANSI", "0 HEAD\r\n1 CHAR ANSI\r\n", "Windows-1252", "1 NAME Renée /X/\r\n1 NOTE CAFÉ”\r\n"},
+		{"no CHAR", "0 HEAD\r\n", "Windows-1252", "1 NAME Renée /X/\r\n1 NOTE CAFÉ”\r\n"},
+		{"declared UTF-8", "0 HEAD\r\n1 CHAR UTF-8\r\n", "UTF-8", "1 NAME Renée /X/\r\n1 NOTE CAFɔ\r\n"},
+		{"UTF-8 BOM", "\xEF\xBB\xBF0 HEAD\r\n1 CHAR UTF-8\r\n", "UTF-8", "1 NAME Renée /X/\r\n1 NOTE CAFɔ\r\n"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			out, info, _, fixes := DecodeReport([]byte(c.head + body))
+			if info.Detected != c.detected || !strings.Contains(string(out), c.text) {
+				t.Errorf("Detected %s, decoded %q; want %s with %q", info.Detected, out, c.detected, c.text)
+			}
+			for _, f := range fixes {
+				if f.UTF8 > 0 {
+					t.Errorf("fix %+v: no line should be reported as read as UTF-8", f)
+				}
+			}
+		})
+	}
+}
+
+// A declared-ANSI file with three valid UTF-8 characters and one stray byte
+// is read mixed; each line holding UTF-8 is reported (LineFix.UTF8).
+func TestDecodeDeclaredLegacyReadAsUTF8Lines(t *testing.T) {
+	raw := []byte("0 HEAD\r\n1 CHAR ANSI\r\n0 @I1@ INDI\r\n1 NAME Ren\xC3\xA9e /Dupr\xC3\xA9/\r\n1 BIRT\r\n2 PLAC Z\xC3\xBCrich\r\n1 NOTE Caf\xE9\r\n0 TRLR\r\n")
+	out, info, fs, fixes := DecodeReport(raw)
+	if info.Detected != "UTF-8" || !strings.Contains(string(out), "1 NAME Renée /Dupré/\r\n1 BIRT\r\n2 PLAC Zürich\r\n1 NOTE Café\r\n") {
+		t.Errorf("Detected %s, decoded %q", info.Detected, out)
+	}
+	if got := codes(fs); !reflect.DeepEqual(got, []string{CodeEncodingMislabeled, CodeEncodingStrayBytes}) {
+		t.Errorf("codes = %v", got)
+	}
+	want := []LineFix{{Line: 4, UTF8: 2}, {Line: 6, UTF8: 1}, {Line: 7, Stray: 1}}
+	if !reflect.DeepEqual(fixes, want) {
+		t.Errorf("fixes = %+v, want %+v", fixes, want)
+	}
+	// Valid UTF-8 under CHAR ANSEL: every line with UTF-8 is reported too.
+	_, _, _, fixes = DecodeReport(readEnc(t, "mislabeled-utf8-as-ansel.ged"))
+	if want := []LineFix{{Line: 6, UTF8: 2}, {Line: 8, UTF8: 1}}; !reflect.DeepEqual(fixes, want) {
+		t.Errorf("mislabeled ANSEL fixes = %+v, want %+v", fixes, want)
+	}
+	// An undeclared file that wins the strict majority reads like declared
+	// UTF-8: no per-line report.
+	_, info, _, fixes = DecodeReport([]byte("0 HEAD\r\n0 @I1@ INDI\r\n1 NAME Ren\xC3\xA9e /Dupr\xC3\xA9/\r\n1 NOTE Caf\xE9\r\n0 TRLR\r\n"))
+	if info.Detected != "UTF-8" || !reflect.DeepEqual(fixes, []LineFix{{Line: 4, Stray: 1}}) {
+		t.Errorf("undeclared: Detected %s, fixes %+v", info.Detected, fixes)
+	}
+}

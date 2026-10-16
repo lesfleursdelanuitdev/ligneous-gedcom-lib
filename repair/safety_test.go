@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -124,7 +125,14 @@ func TestRepairIsIdempotent(t *testing.T) {
 			if !bytes.Equal(again.Data, res.Data) {
 				t.Error("second repair changed the data")
 			}
-			if strings.Join(again.Left, ",") != strings.Join(res.Left, ",") {
+			// ENCODING_MISLABELED for a legacy header read as UTF-8 records
+			// a guess about the original bytes. The repaired file's header is
+			// honest, so the second repair has no guess to report.
+			first := res.Left
+			if !slices.Contains(again.Left, parser.CodeEncodingMislabeled) {
+				first = slices.DeleteFunc(slices.Clone(first), func(c string) bool { return c == parser.CodeEncodingMislabeled })
+			}
+			if strings.Join(again.Left, ",") != strings.Join(first, ",") {
 				t.Errorf("Left %v, then %v", res.Left, again.Left)
 			}
 		})

@@ -87,6 +87,7 @@ const (
 	whatStray      = "converted %d stray Windows-1252 characters to UTF-8"
 	whatUnreadable = "replaced %d unreadable characters with \uFFFD"
 	whatMoved      = "moved a character split across lines onto line %d"
+	whatReadUTF8   = "read %d characters as UTF-8 (the header said %s)"
 )
 
 // srcLine is one line of the decoded original.
@@ -137,8 +138,12 @@ func Repair(data []byte) (*Result, error) {
 	// What decoding did to single lines: stray bytes in a UTF-8 file read as
 	// Windows-1252, unreadable bytes written as U+FFFD, and characters split
 	// across a CONC line moved onto it.
-	unreadable := false
+	unreadable, readUTF8 := false, false
 	for _, f := range fixes {
+		if f.UTF8 > 0 { // the header named a legacy encoding
+			readUTF8 = true
+			changes = append(changes, Change{f.Line, fmt.Sprintf(whatReadUTF8, f.UTF8, info.Declared)})
+		}
 		if f.Stray > 0 {
 			changes = append(changes, Change{f.Line, fmt.Sprintf(whatStray, f.Stray)})
 		}
@@ -311,7 +316,14 @@ func Repair(data []byte) (*Result, error) {
 
 	sort.SliceStable(changes, func(a, b int) bool { return changes[a].Line < changes[b].Line })
 	res := &Result{Data: buf.Bytes(), Changes: changes}
-	res.Left = leftCodes(res.Data, unreadable)
+	var extra []string
+	if unreadable {
+		extra = append(extra, parser.CodeEncodingBadBytes)
+	}
+	if readUTF8 {
+		extra = append(extra, parser.CodeEncodingMislabeled)
+	}
+	res.Left = leftCodes(res.Data, extra...)
 	return res, nil
 }
 
@@ -516,14 +528,16 @@ func cutPoint(v string, limit int) int {
 }
 
 // leftCodes re-checks the repaired data: a lenient parse plus validation with
-// date checks. ENCODING_BAD_BYTES is added when decoding wrote U+FFFD
-// (unreadable), since the replacement characters are valid UTF-8 in the
-// repaired file. Stray bytes converted in a UTF-8 file are fixed, so they
+// date checks, plus the extra codes. The caller passes ENCODING_BAD_BYTES
+// when decoding wrote U+FFFD (unreadable), since the replacement characters
+// are valid UTF-8 in the repaired file, and ENCODING_MISLABELED when a file
+// whose header named a legacy encoding was read as UTF-8, since that is a
+// guess the repaired header no longer shows. Stray bytes converted in a UTF-8 file are fixed, so they
 // leave nothing behind.
-func leftCodes(data []byte, unreadable bool) []string {
+func leftCodes(data []byte, extra ...string) []string {
 	set := map[string]bool{}
-	if unreadable {
-		set[parser.CodeEncodingBadBytes] = true
+	for _, c := range extra {
+		set[c] = true
 	}
 	opts := parser.DefaultOptions()
 	opts.Lenient = true

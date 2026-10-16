@@ -267,7 +267,11 @@ func TestRepairEncodings(t *testing.T) {
 			{0, "converted from Windows-1252 to UTF-8"},
 			{4, "set the character set to UTF-8"},
 		},
-		"encodings/mislabeled-utf8-as-ansel.ged": {{4, "set the character set to UTF-8"}},
+		"encodings/mislabeled-utf8-as-ansel.ged": {
+			{4, "set the character set to UTF-8"},
+			{6, "read 2 characters as UTF-8 (the header said ANSEL)"},
+			{8, "read 1 characters as UTF-8 (the header said ANSEL)"},
+		},
 		"encodings/bom-utf8-char-ansel.ged": {
 			{0, "removed the byte order mark"},
 			{4, "set the character set to UTF-8"},
@@ -295,9 +299,11 @@ func TestRepairEncodings(t *testing.T) {
 			if got[3] != "1 CHAR UTF-8" || got[5] != "1 NAME René /Dupré/" || got[7] != "2 PLAC Zürich" {
 				t.Errorf("lines = %q", got)
 			}
-			for _, code := range []string{"ENCODING_NOT_UTF8", "ENCODING_MISLABELED", "ENCODING_UNDECLARED"} {
+			for _, code := range []string{"ENCODING_NOT_UTF8", "ENCODING_UNDECLARED"} {
 				assertLeftHas(t, res, code, false)
 			}
+			// Read as UTF-8 against its header: the guess stays in Left.
+			assertLeftHas(t, res, "ENCODING_MISLABELED", name == "encodings/mislabeled-utf8-as-ansel.ged")
 		})
 	}
 }
