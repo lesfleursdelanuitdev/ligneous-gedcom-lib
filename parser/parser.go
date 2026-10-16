@@ -86,6 +86,13 @@ func withDetails(e *ParseError, kv ...string) *ParseError {
 // findHeadLine returns the 1-based number of the first "0 HEAD" line, or 1
 // when there is none (nothing is skipped then).
 func findHeadLine(text []byte) int {
+	n, _ := findHead(text)
+	return n
+}
+
+// findHead is findHeadLine that also reports whether a "0 HEAD" line exists.
+// It works on raw bytes: HEAD is ASCII in every supported encoding.
+func findHead(text []byte) (int, bool) {
 	sc := bufio.NewScanner(bytes.NewReader(text))
 	sc.Buffer(make([]byte, 64*1024), 1<<20)
 	sc.Split(splitGedcomLines)
@@ -94,10 +101,10 @@ func findHeadLine(text []byte) int {
 		n++
 		f := strings.Fields(sc.Text())
 		if len(f) >= 2 && f[0] == "0" && f[1] == "HEAD" {
-			return n
+			return n, true
 		}
 	}
-	return 1
+	return 1, false
 }
 
 func parseLines(data []byte, opts *Options) ([]rawLine, []*ParseError, int, error) {

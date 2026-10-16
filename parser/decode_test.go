@@ -176,3 +176,38 @@ func TestParseSetsEncodingAndLineCount(t *testing.T) {
 		t.Error("decode findings should come first")
 	}
 }
+
+func TestDecodeCharAfterLinesBeforeHead(t *testing.T) {
+	out, info, fs := Decode(readEnc(t, "ansel-junk-before-head.ged"))
+	if info.Detected != "ANSEL" || info.Declared != "ANSEL" || info.Reason != "header CHAR" {
+		t.Errorf("info = %+v", info)
+	}
+	if !strings.Contains(string(out), "René /Dupré/") {
+		t.Errorf("name not decoded: %q", out)
+	}
+	if got := codes(fs); !reflect.DeepEqual(got, []string{CodeEncodingNotUTF8}) {
+		t.Fatalf("codes = %v", got)
+	}
+	if fs[0].Line != 6 { // two junk lines, then HEAD on 3, GEDC 4, VERS 5, CHAR 6
+		t.Errorf("CHAR line = %d, want 6", fs[0].Line)
+	}
+}
+
+func TestDecodeCharScanStopsAtNextRecord(t *testing.T) {
+	raw := []byte("0 HEAD\r\n1 GEDC\r\n2 VERS 5.5.1\r\n0 @I1@ INDI\r\n1 CHAR ANSEL\r\n1 NAME A /B/\r\n0 TRLR\r\n")
+	_, info, fs := Decode(raw)
+	if got := codes(fs); !reflect.DeepEqual(got, []string{CodeEncodingUndeclared}) {
+		t.Errorf("codes = %v", got)
+	}
+	if info.Declared != "" {
+		t.Errorf("declared = %q", info.Declared)
+	}
+}
+
+func TestDecodeCharCapCountsFromHead(t *testing.T) {
+	junk := strings.Repeat("junk\n", 60)
+	_, _, fs := Decode([]byte(junk + "0 HEAD\n1 CHAR UTF-8\n0 TRLR\n"))
+	if len(fs) != 0 {
+		t.Errorf("codes = %v", codes(fs))
+	}
+}

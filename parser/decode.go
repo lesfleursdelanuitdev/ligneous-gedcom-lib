@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
 	"strconv"
@@ -52,25 +53,30 @@ func classifyChar(declared string) charKind {
 
 func (k charKind) legacy() bool { return k >= kindANSEL }
 
-// scanChar reads the HEAD.CHAR value from the first 50 lines of b. The CHAR
-// line is ASCII in every supported encoding, so b can still be in its legacy
-// encoding. It returns the value as written and the 1-based line number.
+// scanChar reads the HEAD.CHAR value from the first 50 lines of the HEAD
+// record in b. HEAD is the first "0 HEAD" line (the same rule as the parser's
+// findHeadLine), so lines before it are skipped but still counted; with no
+// "0 HEAD" the scan starts at line 1. The scan ends at the next level-0 line.
+// The CHAR line is ASCII in every supported encoding, so b can still be in its
+// legacy encoding. It returns the value as written and the 1-based line number
+// in b.
 func scanChar(b []byte) (value string, line int) {
-	pos := 0
-	for n := 1; n <= 50 && pos < len(b); n++ {
-		end := bytes.IndexAny(b[pos:], "\r\n")
-		var ln []byte
-		if end < 0 {
-			ln, pos = b[pos:], len(b)
-		} else {
-			ln = b[pos : pos+end]
-			pos += end + 1
-			if b[pos-1] == '\r' && pos < len(b) && b[pos] == '\n' {
-				pos++
-			}
+	head, _ := findHead(b)
+	sc := bufio.NewScanner(bytes.NewReader(b))
+	sc.Buffer(make([]byte, 64*1024), 1<<20)
+	sc.Split(splitGedcomLines)
+	n := 0
+	for sc.Scan() {
+		n++
+		if n < head {
+			continue
 		}
+		if n-head >= 50 {
+			break
+		}
+		ln := sc.Bytes()
 		f := bytes.Fields(ln)
-		if len(f) >= 2 && string(f[0]) == "0" && n > 1 {
+		if len(f) >= 2 && string(f[0]) == "0" && n > head {
 			break // the header ended
 		}
 		if len(f) >= 2 && string(f[0]) == "1" && string(bytes.ToUpper(f[1])) == "CHAR" {
