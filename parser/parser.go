@@ -290,6 +290,7 @@ func buildRecord(lines []rawLine, startIdx int) gedcom.GedcomRecord {
 		Tag:   root.tag,
 		Xref:  root.xref,
 		Value: root.value,
+		Line:  root.lineNumber,
 	}
 
 	// Collect children using a stack-based approach
@@ -308,6 +309,7 @@ func buildRecord(lines []rawLine, startIdx int) gedcom.GedcomRecord {
 			Tag:   rl.tag,
 			Xref:  rl.xref,
 			Value: rl.value,
+			Line:  rl.lineNumber,
 		}
 
 		// Pop stack until we find the parent for this level

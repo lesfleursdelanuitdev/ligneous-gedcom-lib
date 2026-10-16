@@ -54,7 +54,11 @@ type ValidationError struct {
 	// AssociatedXrefs lists every record xref implicated by the rule (primary, related,
 	// and any other individuals/families/sources), deduplicated in a stable order per Code.
 	AssociatedXrefs []string          `json:"AssociatedXrefs,omitempty"`
-	Details           map[string]string `json:"Details,omitempty"`
+	Details         map[string]string `json:"Details,omitempty"`
+	// Line is the 1-based line number in the original file that the finding points at
+	// (the exact node where the check has one, otherwise the record's first line).
+	// It is 0 when unknown, for example for documents built in code.
+	Line int `json:"Line,omitempty"`
 }
 
 func (e *ValidationError) Error() string {
@@ -130,7 +134,50 @@ func ValidateWithOptions(doc *gedcom.GedcomDocument, opts *Options) []*Validatio
 	for _, e := range errs {
 		setAssociatedXrefs(e)
 	}
+	fillInLines(doc, errs)
 	return errs
+}
+
+// fillInLines gives every finding that has no exact line the first line of its
+// record, MISSING_HEADER line 1 and MISSING_TRAILER the file's last line.
+// The xref-to-line index is built once, and only when a finding needs it.
+func fillInLines(doc *gedcom.GedcomDocument, errs []*ValidationError) {
+	var byXref map[string]int
+	for _, e := range errs {
+		if e.Line != 0 {
+			continue
+		}
+		switch e.Code {
+		case CodeMissingHeader:
+			e.Line = 1
+			continue
+		case CodeMissingTrailer:
+			e.Line = doc.LineCount
+			continue
+		case CodeHeaderMissingSubm:
+			e.Line = doc.Header.Line
+			continue
+		}
+		if e.Xref == "" {
+			continue
+		}
+		if byXref == nil {
+			byXref = make(map[string]int, len(doc.Individuals)+len(doc.Families)+len(doc.Sources))
+			for _, list := range [][]gedcom.GedcomRecord{
+				doc.Individuals, doc.Families, doc.Sources, doc.Notes,
+				doc.Repositories, doc.Media, doc.Submitters,
+			} {
+				for i := range list {
+					if x := list[i].Xref; x != "" {
+						if _, dup := byXref[x]; !dup {
+							byXref[x] = list[i].Line
+						}
+					}
+				}
+			}
+		}
+		e.Line = byXref[e.Xref]
+	}
 }
 
 func validateGenealogyWarnings(doc *gedcom.GedcomDocument, opts *Options) []*ValidationError {
@@ -241,6 +288,7 @@ func validateIndividuals(doc *gedcom.GedcomDocument) []*ValidationError {
 				Severity: SeverityError,
 				Code:     CodeMissingXrefIndividual,
 				Message:  "Individual record must have an xref",
+				Line:     indi.Line,
 			})
 			continue
 		}
@@ -262,6 +310,7 @@ func validateIndividuals(doc *gedcom.GedcomDocument) []*ValidationError {
 						Code:     CodeNameTagEmpty,
 						Message:  "NAME tag is present but its value is empty",
 						Xref:     indi.Xref,
+						Line:     nm.Line,
 					})
 					continue
 				}
@@ -272,6 +321,7 @@ func validateIndividuals(doc *gedcom.GedcomDocument) []*ValidationError {
 						Message:  "NAME value has no '/' surname delimiters (unusual for a GEDCOM NAME line)",
 						Xref:     indi.Xref,
 						Details:  map[string]string{"name": truncateRunes(v, 120)},
+						Line:     nm.Line,
 					})
 				}
 			}
@@ -287,6 +337,8 @@ func validateIndividuals(doc *gedcom.GedcomDocument) []*ValidationError {
 					Code:     CodeInvalidSex,
 					Message:  fmt.Sprintf("Invalid SEX value %q, expected M/F/U/X/N", sex),
 					Xref:     indi.Xref,
+					Details:  map[string]string{"sex": sex},
+					Line:     sexChildren[0].Line,
 				})
 			}
 		}
@@ -305,6 +357,7 @@ func validateFamilies(doc *gedcom.GedcomDocument) []*ValidationError {
 				Severity: SeverityError,
 				Code:     CodeMissingXrefFamily,
 				Message:  "Family record must have an xref",
+				Line:     fam.Line,
 			})
 			continue
 		}
@@ -319,6 +372,7 @@ func validateFamilies(doc *gedcom.GedcomDocument) []*ValidationError {
 				Code:     CodeEmptyFamily,
 				Message:  "Family record has no members (no HUSB, WIFE, or CHIL tags)",
 				Xref:     fam.Xref,
+				Details:  map[string]string{"family": fam.Xref},
 			})
 		}
 	}
@@ -353,41 +407,47 @@ func validateXRefs(doc *gedcom.GedcomDocument) []*ValidationError {
 
 	idx := doc.XRefIndex()
 
-	checkRef := func(refValue, sourceXref, refTag string) {
+	checkRef := func(ref *gedcom.GedcomRecord, sourceXref, refTag, family string) {
+		refValue := ref.Value
 		if refValue == "" {
 			return
 		}
 		if _, ok := idx[refValue]; !ok {
 			code := orphanCodeForPointerTag(refTag)
+			details := map[string]string{"pointer_tag": refTag, "pointer": refValue}
+			if family != "" {
+				details["family"] = family
+			}
 			errs = append(errs, &ValidationError{
 				Severity:    SeverityError,
 				Code:        code,
 				Message:     fmt.Sprintf("%s reference to non-existent record %s", refTag, refValue),
 				Xref:        sourceXref,
 				RelatedXref: refValue,
-				Details:     map[string]string{"pointer_tag": refTag, "pointer": refValue},
+				Details:     details,
+				Line:        ref.Line,
 			})
 		}
 	}
 
 	for _, indi := range doc.Individuals {
 		for _, famc := range indi.ChildrenByTag("FAMC") {
-			checkRef(famc.Value, indi.Xref, "FAMC")
+			checkRef(&famc, indi.Xref, "FAMC", "")
 		}
 		for _, fams := range indi.ChildrenByTag("FAMS") {
-			checkRef(fams.Value, indi.Xref, "FAMS")
+			checkRef(&fams, indi.Xref, "FAMS", "")
 		}
 	}
 
 	for _, fam := range doc.Families {
 		for _, husb := range fam.ChildrenByTag("HUSB") {
-			checkRef(husb.Value, fam.Xref, "HUSB")
+			checkRef(&husb, fam.Xref, "HUSB", fam.Xref)
 		}
 		for _, wife := range fam.ChildrenByTag("WIFE") {
-			checkRef(wife.Value, fam.Xref, "WIFE")
+			checkRef(&wife, fam.Xref, "WIFE", fam.Xref)
 		}
 		for _, chil := range fam.ChildrenByTag("CHIL") {
-			checkRef(chil.Value, fam.Xref, "CHIL")
+			checkRef(&chil, fam.Xref, "CHIL", fam.Xref)
 		}
 	}
 
@@ -398,17 +458,25 @@ func validateXRefs(doc *gedcom.GedcomDocument) []*ValidationError {
 	for _, rec := range allRecords {
 		for _, sour := range rec.ChildrenByTag("SOUR") {
 			if isXref(sour.Value) {
-				checkRef(sour.Value, rec.Xref, "SOUR")
+				checkRef(&sour, rec.Xref, "SOUR", familyOf(rec))
 			}
 		}
 		for _, note := range rec.ChildrenByTag("NOTE") {
 			if isXref(note.Value) {
-				checkRef(note.Value, rec.Xref, "NOTE")
+				checkRef(&note, rec.Xref, "NOTE", familyOf(rec))
 			}
 		}
 	}
 
 	return errs
+}
+
+// familyOf returns the record's xref when it is a family, otherwise "".
+func familyOf(rec gedcom.GedcomRecord) string {
+	if rec.Tag == "FAM" {
+		return rec.Xref
+	}
+	return ""
 }
 
 func isXref(s string) bool {
@@ -435,6 +503,7 @@ func validateAssociations(doc *gedcom.GedcomDocument) []*ValidationError {
 							Code:     CodeMissingAssociateXref,
 							Message:  "ASSO tag is missing an associated xref pointer",
 							Xref:     sourceXref,
+							Line:     child.Line,
 						})
 					} else if targetRec, ok := idx[target]; !ok {
 						errs = append(errs, &ValidationError{
@@ -444,6 +513,7 @@ func validateAssociations(doc *gedcom.GedcomDocument) []*ValidationError {
 							Xref:        sourceXref,
 							RelatedXref: target,
 							Details:     map[string]string{"pointer": target},
+							Line:        child.Line,
 						})
 					} else if targetRec.Tag != "INDI" {
 						errs = append(errs, &ValidationError{
@@ -451,7 +521,8 @@ func validateAssociations(doc *gedcom.GedcomDocument) []*ValidationError {
 							Code:     CodeInvalidAssociateTarget,
 							Message:  fmt.Sprintf("ASSO reference %s points to %s, expected INDI", target, targetRec.Tag),
 							Xref:     sourceXref,
-							Details:  map[string]string{"target": target},
+							Details:  map[string]string{"target": target, "target_tag": targetRec.Tag},
+							Line:     child.Line,
 						})
 					}
 
@@ -494,6 +565,11 @@ func validateDateConsistencyStrict(doc *gedcom.GedcomDocument, opts *Options) []
 				Code:     CodeDeathBeforeBirth,
 				Message:  fmt.Sprintf("Death year %d is before birth year %d", deathYear, birthYear),
 				Xref:     indi.Xref,
+				Details: map[string]string{
+					"death_year": strconv.Itoa(deathYear),
+					"birth_year": strconv.Itoa(birthYear),
+				},
+				Line: eventDateLine(&indi, "DEAT"),
 			})
 		}
 
@@ -505,7 +581,8 @@ func validateDateConsistencyStrict(doc *gedcom.GedcomDocument, opts *Options) []
 					Code:     CodeAgeAtDeathExceeds120,
 					Message:  fmt.Sprintf("Age at death (%d years) exceeds 120", age),
 					Xref:     indi.Xref,
-					Details:  map[string]string{"age_years": strconv.Itoa(age)},
+					Details:  map[string]string{"age_years": strconv.Itoa(age), "age": strconv.Itoa(age)},
+					Line:     eventDateLine(&indi, "DEAT"),
 				})
 			}
 		}

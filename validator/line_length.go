@@ -26,6 +26,7 @@ func PhysicalLineLengthWarnings(gedcomUTF8 string, maxBytes int) []*ValidationEr
 				Severity: SeverityWarning,
 				Code:     "LINE_EXCEEDS_MAX_PHYSICAL_LENGTH",
 				Message:  fmt.Sprintf("line %d has length %d bytes (limit %d)", i+1, len(line), maxBytes),
+				Line:     i + 1,
 			}
 			setAssociatedXrefs(ve)
 			errs = append(errs, ve)

@@ -35,6 +35,9 @@ type GedcomRecord struct {
 	Xref     string         `json:"xref,omitempty"`
 	Value    string         `json:"value,omitempty"`
 	Children []GedcomRecord `json:"children,omitempty"`
+	// Line is the 1-based line number of this node in the original file.
+	// It is 0 for nodes that were not parsed from a file.
+	Line int `json:"line,omitempty"`
 }
 
 // ChildrenByTag returns all direct children with the given tag.

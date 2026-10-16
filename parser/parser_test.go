@@ -510,3 +510,38 @@ func TestLenientSkipsBadLines(t *testing.T) {
 		t.Errorf("strict err = %v", err)
 	}
 }
+
+func TestRecordLineNumbers(t *testing.T) {
+	input := "0 HEAD\n1 CHAR UTF-8\n1 GEDC\n0 @I1@ INDI\n1 NAME A /B/\n1 BIRT\n2 DATE 1900\n0 TRLR\n"
+	doc, _, err := Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if doc.Header.Line != 1 {
+		t.Errorf("header line = %d, want 1", doc.Header.Line)
+	}
+	indi := doc.Individuals[0]
+	if indi.Line != 4 {
+		t.Errorf("INDI line = %d, want 4", indi.Line)
+	}
+	if got := indi.Children[0].Line; got != 5 {
+		t.Errorf("NAME line = %d, want 5", got)
+	}
+	if got := indi.Children[1].Children[0].Line; got != 7 {
+		t.Errorf("DATE line = %d, want 7", got)
+	}
+	if doc.Trailer.Line != 8 {
+		t.Errorf("TRLR line = %d, want 8", doc.Trailer.Line)
+	}
+}
+
+func TestRecordLineNumbersAfterBlankAndJunk(t *testing.T) {
+	input := "junk\n0 HEAD\n\n1 CHAR UTF-8\n0 @I1@ INDI\n1 NAME A /B/\n0 TRLR\n"
+	doc, _, err := ParseWithOptions(strings.NewReader(input), &Options{Lenient: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if doc.Header.Line != 2 || doc.Individuals[0].Line != 5 || doc.Individuals[0].Children[0].Line != 6 {
+		t.Errorf("lines = %d %d %d, want 2 5 6", doc.Header.Line, doc.Individuals[0].Line, doc.Individuals[0].Children[0].Line)
+	}
+}
