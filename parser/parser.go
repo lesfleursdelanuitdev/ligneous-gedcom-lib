@@ -11,8 +11,6 @@
 package parser
 
 import (
-	"bufio"
-	"bytes"
 	"io"
 	"strconv"
 	"strings"
@@ -74,7 +72,7 @@ func ParseWithOptions(r io.Reader, opts *Options) (*gedcom.GedcomDocument, []*Pa
 	return doc, warnings, nil
 }
 
-// parseLines tokenizes the input into raw lines.
+// withDetails sets e's Details from key/value pairs and returns e.
 func withDetails(e *ParseError, kv ...string) *ParseError {
 	e.Details = map[string]string{}
 	for i := 0; i+1 < len(kv); i += 2 {
@@ -106,19 +104,21 @@ func findHead(text []byte) (int, bool) {
 	return 1, false
 }
 
+// parseLines tokenizes the input into raw lines. It walks the in-memory data
+// with nextLine, so a line of any length is read; lines over 255 bytes get
+// LINE_TOO_LONG.
 func parseLines(data []byte, opts *Options) ([]rawLine, []*ParseError, int, error) {
 	headLine := findHeadLine(data)
-	scanner := bufio.NewScanner(bytes.NewReader(data))
-	scanner.Buffer(make([]byte, 64*1024), 1<<20)
-	scanner.Split(splitGedcomLines)
 	var lines []rawLine
 	var warnings []*ParseError
 	lineNum := 0
 	prevLevel := -1
 
-	for scanner.Scan() {
+	for pos := 0; pos < len(data); {
+		var ln []byte
+		ln, pos = nextLine(data, pos)
 		lineNum++
-		text := scanner.Text()
+		text := string(ln)
 
 		if lineNum < headLine {
 			// Before HEAD: not tokenised, so junk never produces BAD_LINE.
@@ -158,10 +158,6 @@ func parseLines(data []byte, opts *Options) ([]rawLine, []*ParseError, int, erro
 		}
 		prevLevel = rl.level
 		lines = append(lines, rl)
-	}
-
-	if err := scanner.Err(); err != nil {
-		return nil, warnings, lineNum, wrapParseError(CodeReadError, lineNum, "error reading input", "", err)
 	}
 
 	return lines, warnings, lineNum, nil

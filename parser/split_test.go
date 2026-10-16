@@ -1,7 +1,6 @@
 package parser
 
 import (
-	"bufio"
 	"fmt"
 	"strings"
 	"testing"
@@ -9,14 +8,12 @@ import (
 
 func splitAll(t *testing.T, s string) []string {
 	t.Helper()
-	sc := bufio.NewScanner(strings.NewReader(s))
-	sc.Split(splitGedcomLines)
+	b := []byte(s)
 	var out []string
-	for sc.Scan() {
-		out = append(out, sc.Text())
-	}
-	if err := sc.Err(); err != nil {
-		t.Fatal(err)
+	for pos := 0; pos < len(b); {
+		var ln []byte
+		ln, pos = nextLine(b, pos)
+		out = append(out, string(ln))
 	}
 	return out
 }

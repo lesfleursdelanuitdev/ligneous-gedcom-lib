@@ -9,6 +9,8 @@ import (
 	"testing"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/lesfleursdelanuitdev/ligneous-gedcom-lib/parser"
 )
 
 // fileLine is one line of a file: its content and its terminator.
@@ -431,4 +433,35 @@ func TestRepairNoSplitPastMaxDepth(t *testing.T) {
 		t.Error("data changed")
 	}
 	assertLeftHas(t, res, "LINE_TOO_LONG", true)
+}
+
+// splitLines must split exactly like the parser (parser/split.go nextLine):
+// same number of lines, so Change line numbers match finding line numbers.
+func TestSplitLinesMatchesParser(t *testing.T) {
+	inputs := []string{
+		"0 HEAD\n1 CHAR UTF-8\n0 TRLR\n",
+		"0 HEAD\r\n1 CHAR UTF-8\r\n0 TRLR",
+		"0 HEAD\r1 CHAR UTF-8\r0 TRLR\r",
+		"0 HEAD\r\r\n\n\r1 CHAR UTF-8\n\r\n0 TRLR\r",
+		"junk\r\n\r\n0 HEAD\n1 NOTE a\r\n\r\n\n0 TRLR\n\n",
+		"0 HEAD\n1 NOTE " + strings.Repeat("x", 1<<20+5) + "\r0 TRLR\r\n",
+	}
+	for i, in := range inputs {
+		opts := parser.DefaultOptions()
+		opts.Lenient = true
+		doc, _, err := parser.ParseWithOptions(strings.NewReader(in), opts)
+		if err != nil {
+			t.Fatalf("input %d: %v", i, err)
+		}
+		src := splitLines([]byte(in))
+		if doc.LineCount != len(src) {
+			t.Errorf("input %d: parser counts %d lines, splitLines %d", i, doc.LineCount, len(src))
+		}
+		if got, want := len(src), len(lines([]byte(in))); got != want {
+			t.Errorf("input %d: splitLines %d lines, test helper %d", i, got, want)
+		}
+		if doc.Trailer.Line == 0 || src[doc.Trailer.Line-1].text != "0 TRLR" {
+			t.Errorf("input %d: TRLR on parser line %d is not splitLines' line", i, doc.Trailer.Line)
+		}
+	}
 }

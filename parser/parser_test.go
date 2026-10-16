@@ -545,3 +545,30 @@ func TestRecordLineNumbersAfterBlankAndJunk(t *testing.T) {
 		t.Errorf("lines = %d %d %d, want 2 5 6", doc.Header.Line, doc.Individuals[0].Line, doc.Individuals[0].Children[0].Line)
 	}
 }
+
+// A line longer than 1 MB parses like any other long line, in strict and in
+// lenient mode: one LINE_TOO_LONG, no READ_ERROR.
+func TestLineOver1MB(t *testing.T) {
+	long := strings.Repeat("x", 1<<20+100)
+	in := "0 HEAD\r\n1 CHAR UTF-8\r\n0 @N1@ NOTE " + long + "\r\n0 @I1@ INDI\r\n1 NAME A /B/\r\n0 TRLR\r\n"
+	for _, lenient := range []bool{false, true} {
+		opts := DefaultOptions()
+		opts.Lenient = lenient
+		doc, warnings, err := ParseWithOptions(strings.NewReader(in), opts)
+		if err != nil {
+			t.Fatalf("lenient=%v: %v", lenient, err)
+		}
+		if len(doc.Notes) != 1 || doc.Notes[0].Value != long {
+			t.Errorf("lenient=%v: note not read", lenient)
+		}
+		if len(doc.Individuals) != 1 || doc.Individuals[0].Line != 4 {
+			t.Errorf("lenient=%v: individual after the long line missing or misnumbered", lenient)
+		}
+		if got := findCode(warnings, CodeLineTooLong); len(got) != 1 || got[0].Line != 3 {
+			t.Errorf("lenient=%v: LINE_TOO_LONG = %+v", lenient, got)
+		}
+		if doc.LineCount != 6 {
+			t.Errorf("lenient=%v: LineCount = %d", lenient, doc.LineCount)
+		}
+	}
+}
