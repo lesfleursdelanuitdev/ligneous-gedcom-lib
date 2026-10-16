@@ -229,7 +229,7 @@ func (e *enricherState) extractIndividualData(ed *EnrichedDocument) {
 		fullName := ""
 		nameRecs := indi.ChildrenByTag("NAME")
 		if len(nameRecs) > 0 {
-			fullName = nameRecs[0].Value
+			fullName = strings.TrimSpace(nameRecs[0].Value)
 		}
 
 		ei := EnrichedIndividual{
@@ -350,7 +350,7 @@ func (e *enricherState) extractIndividualNames(ed *EnrichedDocument, indi gedcom
 	var primarySurnameLower string
 
 	for formIdx, nameRec := range nameRecs {
-		fullName := nameRec.Value
+		fullName := strings.TrimSpace(nameRec.Value)
 
 		nameType := nameRec.ChildValue("TYPE")
 		if nameType == "" {
@@ -480,7 +480,7 @@ func (e *enricherState) extractFamilyData(ed *EnrichedDocument) {
 			}
 			surname := childValueWithConc(nameRecs[0], "SURN")
 			if surname == "" {
-				surname = extractSurnameFromFullName(nameRecs[0].Value)
+				surname = extractSurnameFromFullName(strings.TrimSpace(nameRecs[0].Value))
 			}
 			if surnIdx := e.getOrCreateSurname(surname, false); surnIdx >= 0 && !linkedSurnames[surnIdx] {
 				ed.FamilySurnames = append(ed.FamilySurnames, FamilySurnameLink{

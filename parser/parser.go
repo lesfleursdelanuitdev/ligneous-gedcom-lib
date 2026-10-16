@@ -82,24 +82,29 @@ func stripBOM(r io.Reader) io.Reader {
 // parseLines tokenizes the input into raw lines.
 func parseLines(r io.Reader, opts *Options) ([]rawLine, []*ParseError, error) {
 	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 64*1024), 1<<20)
+	scanner.Split(splitGedcomLines)
 	var lines []rawLine
 	var warnings []*ParseError
 	lineNum := 0
 
 	for scanner.Scan() {
 		lineNum++
-		text := strings.TrimRight(scanner.Text(), "\r\n")
+		text := scanner.Text()
 
 		if strings.TrimSpace(text) == "" {
-			warnings = append(warnings, newParseError(lineNum, "empty line skipped", text))
+			warnings = append(warnings, newParseError(CodeEmptyLine, lineNum, "empty line skipped", text))
 			continue
 		}
 
 		if len(text) > 255 {
-			warnings = append(warnings, newParseError(lineNum, "line exceeds 255-character GEDCOM limit", text[:80]+"..."))
+			warnings = append(warnings, newParseError(CodeLineTooLong, lineNum, "line exceeds 255-character GEDCOM limit", text[:80]+"..."))
 		}
 
-		rl, err := parseSingleLine(text, lineNum, opts)
+		rl, warn, err := parseSingleLine(text, lineNum, opts)
+		if warn != nil {
+			warnings = append(warnings, warn)
+		}
 		if err != nil {
 			return nil, warnings, err
 		}
@@ -107,53 +112,78 @@ func parseLines(r io.Reader, opts *Options) ([]rawLine, []*ParseError, error) {
 	}
 
 	if err := scanner.Err(); err != nil {
-		return nil, warnings, wrapParseError(lineNum, "error reading input", "", err)
+		return nil, warnings, wrapParseError(CodeReadError, lineNum, "error reading input", "", err)
 	}
 
 	return lines, warnings, nil
 }
 
-func parseSingleLine(text string, lineNum int, opts *Options) (rawLine, error) {
-	parts := strings.Fields(text)
-	if len(parts) < 2 {
-		return rawLine{}, newParseError(lineNum, "line must have at least level and tag", text)
+func isSep(c byte) bool { return c == ' ' || c == '\t' }
+
+// parseSingleLine tokenises one line by position: [ws] level SP+ [xref SP+] tag [SP value].
+// The value is everything after the single space that follows the tag, verbatim.
+// The returned warning (leading whitespace) is non-nil even when err is nil.
+func parseSingleLine(text string, lineNum int, opts *Options) (rawLine, *ParseError, error) {
+	var warn *ParseError
+	i := 0
+	for i < len(text) && isSep(text[i]) {
+		i++
+	}
+	if i > 0 {
+		warn = newParseError(CodeLeadingWhitespace, lineNum, "line starts with whitespace", text)
 	}
 
-	level, err := strconv.Atoi(parts[0])
+	// level
+	start := i
+	for i < len(text) && !isSep(text[i]) {
+		i++
+	}
+	levelTok := text[start:i]
+	for i < len(text) && isSep(text[i]) {
+		i++
+	}
+	if i >= len(text) {
+		return rawLine{}, warn, newParseError(CodeBadLine, lineNum, "line must have at least level and tag", text)
+	}
+
+	level, err := strconv.Atoi(levelTok)
 	if err != nil {
-		return rawLine{}, wrapParseError(lineNum, "invalid level number", text, err)
+		return rawLine{}, warn, wrapParseError(CodeBadLevel, lineNum, "invalid level number", text, err)
 	}
 	if level < 0 {
-		return rawLine{}, newParseError(lineNum, "level cannot be negative", text)
+		return rawLine{}, warn, newParseError(CodeBadLevel, lineNum, "level cannot be negative", text)
 	}
 	if opts.MaxNestingDepth > 0 && level > opts.MaxNestingDepth {
-		return rawLine{}, newParseError(lineNum, "maximum nesting depth exceeded", text)
+		return rawLine{}, warn, newParseError(CodeTooDeep, lineNum, "maximum nesting depth exceeded", text)
 	}
 
-	var xref, tag string
-	var valueStart int
+	// next token: xref or tag
+	start = i
+	for i < len(text) && !isSep(text[i]) {
+		i++
+	}
+	tok := text[start:i]
 
-	if len(parts[1]) > 2 && parts[1][0] == '@' && parts[1][len(parts[1])-1] == '@' {
-		xref = parts[1]
-		if len(parts) < 3 {
-			return rawLine{}, newParseError(lineNum, "line with xref must have a tag", text)
+	var xref string
+	if len(tok) > 2 && tok[0] == '@' && tok[len(tok)-1] == '@' {
+		xref = tok
+		for i < len(text) && isSep(text[i]) {
+			i++
 		}
-		tag = parts[2]
-		valueStart = 3
-	} else {
-		tag = parts[1]
-		valueStart = 2
+		if i >= len(text) {
+			return rawLine{}, warn, newParseError(CodeXrefWithoutTag, lineNum, "line with xref must have a tag", text)
+		}
+		start = i
+		for i < len(text) && !isSep(text[i]) {
+			i++
+		}
+		tok = text[start:i]
 	}
+	tag := tok
 
 	var value string
-	if valueStart < len(parts) {
-		tagPos := strings.Index(text, tag)
-		if tagPos >= 0 {
-			afterTag := tagPos + len(tag)
-			if afterTag < len(text) {
-				value = strings.TrimLeft(text[afterTag:], " ")
-			}
-		}
+	if i < len(text) {
+		value = text[i+1:] // skip the single separator; rest is verbatim
 	}
 
 	return rawLine{
@@ -162,7 +192,7 @@ func parseSingleLine(text string, lineNum int, opts *Options) (rawLine, error) {
 		tag:        tag,
 		value:      value,
 		lineNumber: lineNum,
-	}, nil
+	}, warn, nil
 }
 
 // buildDocument converts flat raw lines into a hierarchical GedcomDocument.

@@ -940,3 +940,20 @@ func TestEnrichRealFiles(t *testing.T) {
 		})
 	}
 }
+
+func TestEnrichNameWithDoubleSpace(t *testing.T) {
+	doc, _, err := parser.Parse(strings.NewReader("0 HEAD\n0 @I1@ INDI\n1 NAME  John /Doe/\n0 TRLR\n"))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	ed := Enrich(doc)
+	if got := ed.Individuals[0].FullName; got != "John /Doe/" {
+		t.Errorf("full name = %q, want %q", got, "John /Doe/")
+	}
+	if len(ed.GivenNames) != 1 || ed.GivenNames[0].Value != "John" {
+		t.Errorf("given names = %+v", ed.GivenNames)
+	}
+	if len(ed.Surnames) != 1 || ed.Surnames[0].Value != "Doe" {
+		t.Errorf("surnames = %+v", ed.Surnames)
+	}
+}

@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -147,6 +148,8 @@ func TestParseEmptyLine(t *testing.T) {
 	}
 	if len(warnings) != 1 {
 		t.Errorf("expected 1 warning for empty line, got %d", len(warnings))
+	} else if warnings[0].Code != CodeEmptyLine || warnings[0].Severity != "warning" {
+		t.Errorf("got code %q severity %q", warnings[0].Code, warnings[0].Severity)
 	}
 	if doc.Header.Tag != "HEAD" {
 		t.Errorf("expected HEAD tag, got %q", doc.Header.Tag)
@@ -157,7 +160,11 @@ func TestParseInvalidLevel(t *testing.T) {
 	input := "abc HEAD\n0 TRLR\n"
 	_, _, err := Parse(strings.NewReader(input))
 	if err == nil {
-		t.Error("expected error for invalid level")
+		t.Fatal("expected error for invalid level")
+	}
+	var pe *ParseError
+	if !errors.As(err, &pe) || pe.Code != CodeBadLevel || pe.Severity != "error" {
+		t.Errorf("got %#v", err)
 	}
 }
 
@@ -165,7 +172,11 @@ func TestParseMissingTag(t *testing.T) {
 	input := "0\n"
 	_, _, err := Parse(strings.NewReader(input))
 	if err == nil {
-		t.Error("expected error for line with only level")
+		t.Fatal("expected error for line with only level")
+	}
+	var pe *ParseError
+	if !errors.As(err, &pe) || pe.Code != CodeBadLine || pe.Severity != "error" {
+		t.Errorf("got %#v", err)
 	}
 }
 
@@ -327,4 +338,73 @@ func TestParseMalformedFiles(t *testing.T) {
 		}
 		t.Logf("parsed: %d individuals", doc.IndividualCount())
 	})
+}
+
+func TestParseCROnlyFile(t *testing.T) {
+	doc, _, err := Parse(strings.NewReader("0 HEAD\r1 GEDC\r2 VERS 5.5.1\r0 @I1@ INDI\r1 NAME A /B/\r0 TRLR\r"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Individuals) != 1 || doc.Trailer.Tag != "TRLR" || doc.Header.Value != "" {
+		t.Errorf("indi=%d trailer=%q header value=%q", len(doc.Individuals), doc.Trailer.Tag, doc.Header.Value)
+	}
+}
+
+func TestTokeniseXrefContainingTag(t *testing.T) {
+	doc, _, err := Parse(strings.NewReader("0 HEAD\n0 @NOTE1@ NOTE Hello there\n0 TRLR\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Notes) != 1 || doc.Notes[0].Value != "Hello there" || doc.Notes[0].Xref != "@NOTE1@" {
+		t.Errorf("notes = %+v", doc.Notes)
+	}
+}
+
+func childValues(t *testing.T, line string) string {
+	t.Helper()
+	doc, _, err := Parse(strings.NewReader("0 HEAD\n0 @N1@ NOTE x\n" + line + "\n0 TRLR\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return doc.Notes[0].Children[0].Value
+}
+
+func TestTokeniseConcKeepsLeadingSpace(t *testing.T) {
+	if got := childValues(t, "1 CONC  world"); got != " world" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestTokeniseEmptyValues(t *testing.T) {
+	for line, want := range map[string]string{"1 CONC": "", "1 NAME ": "", "1 CONC  ": " ", "2 DATE": ""} {
+		if got := childValues(t, line); got != want {
+			t.Errorf("%q: got %q want %q", line, got, want)
+		}
+	}
+}
+
+func TestLeadingWhitespaceWarning(t *testing.T) {
+	doc, warnings, err := Parse(strings.NewReader("0 HEAD\n0 @I1@ INDI\n  1 NAME A /B/\n0 TRLR\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warnings) != 1 || warnings[0].Code != CodeLeadingWhitespace || warnings[0].Line != 3 || warnings[0].Severity != "warning" {
+		t.Fatalf("warnings = %+v", warnings)
+	}
+	if doc.Individuals[0].Children[0].Value != "A /B/" {
+		t.Errorf("value = %q", doc.Individuals[0].Children[0].Value)
+	}
+}
+
+func TestLongLineOver64KB(t *testing.T) {
+	doc, warnings, err := Parse(strings.NewReader("0 HEAD\n0 @N1@ NOTE " + strings.Repeat("x", 70000) + "\n0 TRLR\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Notes[0].Value) != 70000 {
+		t.Errorf("value length %d", len(doc.Notes[0].Value))
+	}
+	if len(warnings) != 1 || warnings[0].Code != CodeLineTooLong || warnings[0].Severity != "warning" {
+		t.Errorf("warnings = %+v", warnings)
+	}
 }
