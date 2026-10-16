@@ -1,0 +1,31 @@
+0 HEAD
+1 GEDC
+2 VERS 5.5.1
+2 FORM LINEAGE-LINKED
+1 CHAR UTF-8
+0 @I1@ INDI
+1 NAME Jean /Dupont/
+1 SEX M
+1 BIRT
+2 DATE 1900
+2 SOUR @S1@
+3 QUAY  3
+1 NOTE  @N1@
+1 FAMS @F1@
+0 @I2@ INDI
+1 NAME Paul /Dupont/
+1 FAMC @F1@
+2 PEDI  adopted
+0 @I3@ INDI
+1 NAME Anne /Dupont/
+1 FAMC @F1@
+0 @F1@ FAM
+1 HUSB @I1@
+1 CHIL @I2@
+1 CHIL @I3@
+2 PEDI  foster
+1 NOTE  @N1@
+0 @N1@ NOTE A shared note
+0 @S1@ SOUR
+1 TITL Parish register
+0 TRLR

@@ -59,3 +59,33 @@ func TestExportDoubleSpaceValues(t *testing.T) {
 		t.Errorf("family husband = %+v", j.Families)
 	}
 }
+
+// Two spaces before NOTE pointers: the JSON note refs and the CSV notes
+// column read "@N1@", as with one space.
+func TestExportDoubleSpaceNoteRefs(t *testing.T) {
+	double := parseSpacingFixture(t, "double-space-refs.ged")
+	single := parseSpacingFixture(t, "single-space-refs.ged")
+	csvD, err := ToCSVString(double)
+	if err != nil {
+		t.Fatal(err)
+	}
+	csvS, _ := ToCSVString(single)
+	if csvD != csvS {
+		t.Errorf("CSV differs:\n double %s\n single %s", csvD, csvS)
+	}
+	if strings.Contains(csvD, " @N1@") {
+		t.Errorf("CSV note ref not trimmed: %s", csvD)
+	}
+	jsD, _ := ToJSONString(double)
+	jsS, _ := ToJSONString(single)
+	if jsD != jsS {
+		t.Errorf("JSON differs:\n double %s\n single %s", jsD, jsS)
+	}
+	j := ToJSON(double)
+	if len(j.Individuals) == 0 || len(j.Individuals[0].Notes) != 1 || j.Individuals[0].Notes[0].Xref != "@N1@" {
+		t.Errorf("individual notes = %+v", j.Individuals)
+	}
+	if len(j.Families) != 1 || len(j.Families[0].Notes) != 1 || j.Families[0].Notes[0].Xref != "@N1@" {
+		t.Errorf("family notes = %+v", j.Families)
+	}
+}

@@ -416,9 +416,9 @@ func collectNoteRefs(rec gedcom.GedcomRecord, skipTags map[string]bool) []Denorm
 
 func collectNoteRefsRecursive(rec gedcom.GedcomRecord, skipTags map[string]bool, seen map[string]bool, refs *[]DenormalizedNoteRef) {
 	for _, child := range rec.Children {
-		if child.Tag == "NOTE" && child.Value != "" && !seen[child.Value] {
-			seen[child.Value] = true
-			*refs = append(*refs, DenormalizedNoteRef{Xref: child.Value})
+		if v := child.TrimmedValue(); child.Tag == "NOTE" && v != "" && !seen[v] {
+			seen[v] = true
+			*refs = append(*refs, DenormalizedNoteRef{Xref: v})
 		}
 		if child.Tag != "NOTE" && (skipTags == nil || !skipTags[child.Tag]) {
 			collectNoteRefsRecursive(child, skipTags, seen, refs)
@@ -437,9 +437,9 @@ func collectNoteXrefs(rec gedcom.GedcomRecord, skipTags map[string]bool) []strin
 
 func collectNoteXrefsRecursive(rec gedcom.GedcomRecord, skipTags map[string]bool, seen map[string]bool, xrefs *[]string) {
 	for _, child := range rec.Children {
-		if child.Tag == "NOTE" && child.Value != "" && !seen[child.Value] {
-			seen[child.Value] = true
-			*xrefs = append(*xrefs, child.Value)
+		if v := child.TrimmedValue(); child.Tag == "NOTE" && v != "" && !seen[v] {
+			seen[v] = true
+			*xrefs = append(*xrefs, v)
 		}
 		if child.Tag != "NOTE" && (skipTags == nil || !skipTags[child.Tag]) {
 			collectNoteXrefsRecursive(child, skipTags, seen, xrefs)

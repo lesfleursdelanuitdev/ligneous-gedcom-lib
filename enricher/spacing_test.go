@@ -69,3 +69,32 @@ func TestEnrichDoubleSpaceValues(t *testing.T) {
 		t.Errorf("individuals = %+v", ed.Individuals)
 	}
 }
+
+// Two spaces before QUAY and PEDI values: the citation quality and the
+// pedigree read the same as with one space.
+func TestEnrichDoubleSpaceQuayPedi(t *testing.T) {
+	ed, double := enrichedNoLines(t, "double-space-refs.ged")
+	_, single := enrichedNoLines(t, "single-space-refs.ged")
+	if double != single {
+		i := 0
+		for i < len(double) && i < len(single) && double[i] == single[i] {
+			i++
+		}
+		t.Errorf("enriched output differs at byte %d:\n double …%s\n single …%s", i,
+			double[max(0, i-150):min(len(double), i+150)], single[max(0, i-150):min(len(single), i+150)])
+	}
+	quality := 0
+	for _, l := range ed.EventSources {
+		quality = l.Quality
+	}
+	if quality != 3 {
+		t.Errorf("citation quality = %d, want 3 (%+v)", quality, ed.EventSources)
+	}
+	ped := map[string]string{}
+	for _, e := range ed.ParentChild {
+		ped[e.ChildXref] = e.Pedigree
+	}
+	if ped["@I2@"] != "adopted" || ped["@I3@"] != "foster" {
+		t.Errorf("pedigree = %v, want @I2@ adopted, @I3@ foster", ped)
+	}
+}

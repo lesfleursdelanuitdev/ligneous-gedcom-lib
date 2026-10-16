@@ -103,7 +103,7 @@ func (e *enricherState) extractRecordSources(ed *EnrichedDocument, rec gedcom.Ge
 		}
 
 		page := sourChild.ChildValue("PAGE")
-		qualityStr := sourChild.ChildValue("QUAY")
+		qualityStr := childTrimmed(&sourChild, "QUAY")
 		quality := 0
 		if q, err := strconv.Atoi(qualityStr); err == nil {
 			quality = q

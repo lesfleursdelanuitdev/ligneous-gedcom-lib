@@ -805,7 +805,7 @@ func findPedigreeFromIndiFamc(doc *gedcom.GedcomDocument, childXref, famXref str
 	}
 	for _, famc := range child.ChildrenByTag("FAMC") {
 		if pedigreedoc.XrefEqual(famc.Value, famXref) {
-			return famc.ChildValue("PEDI")
+			return childTrimmed(&famc, "PEDI")
 		}
 	}
 	return ""
@@ -814,7 +814,7 @@ func findPedigreeFromIndiFamc(doc *gedcom.GedcomDocument, childXref, famXref str
 func findPedigreeFromFamCHIL(fam *gedcom.GedcomRecord, childXref string) string {
 	for _, chil := range fam.ChildrenByTag("CHIL") {
 		if pedigreedoc.XrefEqual(chil.Value, childXref) {
-			return chil.ChildValue("PEDI")
+			return childTrimmed(&chil, "PEDI")
 		}
 	}
 	return ""
