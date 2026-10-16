@@ -103,7 +103,7 @@ func (e *enricherState) extractNotes(ed *EnrichedDocument) {
 
 	// Phase 5: Notes on sources (recurse fully).
 	for srcIdx, src := range ed.Sources {
-		srcRec := e.doc.FindByXref(src.Xref)
+		srcRec := e.findXref(src.Xref)
 		if srcRec == nil {
 			continue
 		}
@@ -176,7 +176,7 @@ func (e *enricherState) resolveOrCreateNote(ed *EnrichedDocument, noteRec gedcom
 // findResidenceRecord locates the raw GedcomRecord for a RESI entry by walking
 // the owner record's children and matching by sort order.
 func (e *enricherState) findResidenceRecord(res Residence) *gedcom.GedcomRecord {
-	owner := e.doc.FindByXref(res.OwnerXref)
+	owner := e.findXref(res.OwnerXref)
 	if owner == nil {
 		return nil
 	}
@@ -196,7 +196,7 @@ func (e *enricherState) findResidenceRecord(res Residence) *gedcom.GedcomRecord 
 // findEventRecord locates the raw GedcomRecord for an event by walking the
 // owner record's children.
 func (e *enricherState) findEventRecord(evt Event) *gedcom.GedcomRecord {
-	owner := e.doc.FindByXref(evt.OwnerXref)
+	owner := e.findXref(evt.OwnerXref)
 	if owner == nil {
 		return nil
 	}

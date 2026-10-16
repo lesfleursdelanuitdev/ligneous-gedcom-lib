@@ -94,7 +94,7 @@ func (e *enricherState) extractMedia(ed *EnrichedDocument) {
 
 	// Phase 4: Media references on sources
 	for srcIdx, src := range ed.Sources {
-		srcRec := e.doc.FindByXref(src.Xref)
+		srcRec := e.findXref(src.Xref)
 		if srcRec == nil {
 			continue
 		}

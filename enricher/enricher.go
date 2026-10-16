@@ -116,6 +116,10 @@ func Enrich(doc *gedcom.GedcomDocument) *EnrichedDocument {
 type enricherState struct {
 	doc *gedcom.GedcomDocument
 
+	// xrefIdx is built on first use by findXref. It holds pointers into the
+	// document's record slices, which Enrich never appends to.
+	xrefIdx map[string]*gedcom.GedcomRecord
+
 	dates      []ParsedDate
 	dateIndex  map[string]int
 
@@ -132,6 +136,14 @@ type enricherState struct {
 	sourceXrefIndex map[string]int
 	repoXrefIndex   map[string]int
 	mediaXrefIndex  map[string]int
+}
+
+// findXref is FindByXref backed by an index built once per Enrich.
+func (e *enricherState) findXref(xref string) *gedcom.GedcomRecord {
+	if e.xrefIdx == nil {
+		e.xrefIdx = e.doc.XrefIndex()
+	}
+	return e.xrefIdx[xref]
 }
 
 func (e *enricherState) getOrCreateDate(dateStr string) int {
@@ -684,7 +696,7 @@ func (e *enricherState) buildRelationshipEdges(ed *EnrichedDocument) {
 				BirthOrder: i + 1,
 			})
 
-			childIndi := e.doc.FindByXref(childXref)
+			childIndi := e.findXref(childXref)
 			famcLink := findFamcRecord(childIndi, fam.Xref)
 			noteText := firstInlineNoteUnderRecord(famcLink)
 			bioX, adoptX, fromNote := pedigreedoc.ParseMixedParentageNote(noteText)
@@ -709,7 +721,7 @@ func (e *enricherState) buildRelationshipEdges(ed *EnrichedDocument) {
 				}
 			}
 
-			pedigree := findPedigree(e.doc, childXref, fam.Xref)
+			pedigree := findPedigree(e.findXref, childXref, fam.Xref)
 			relType := "biological"
 			if pedigree == "adopted" || pedigree == "foster" || pedigree == "sealing" {
 				relType = pedigree
@@ -787,19 +799,19 @@ func pedigreeAndRelTypeForParent(parentXref, bioXref, adoptXref string) (pedigre
 	return "", "biological"
 }
 
-func findPedigree(doc *gedcom.GedcomDocument, childXref, famXref string) string {
-	if p := findPedigreeFromIndiFamc(doc, childXref, famXref); p != "" {
+func findPedigree(find func(string) *gedcom.GedcomRecord, childXref, famXref string) string {
+	if p := findPedigreeFromIndiFamc(find, childXref, famXref); p != "" {
 		return p
 	}
-	famRec := doc.FindByXref(famXref)
+	famRec := find(famXref)
 	if famRec == nil || famRec.Tag != "FAM" {
 		return ""
 	}
 	return findPedigreeFromFamCHIL(famRec, childXref)
 }
 
-func findPedigreeFromIndiFamc(doc *gedcom.GedcomDocument, childXref, famXref string) string {
-	child := doc.FindByXref(childXref)
+func findPedigreeFromIndiFamc(find func(string) *gedcom.GedcomRecord, childXref, famXref string) string {
+	child := find(childXref)
 	if child == nil {
 		return ""
 	}
