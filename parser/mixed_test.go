@@ -17,8 +17,19 @@ func badBytesFinding(t *testing.T, fs []*ParseError) *ParseError {
 	return nil
 }
 
+func strayFinding(t *testing.T, fs []*ParseError) *ParseError {
+	t.Helper()
+	for _, f := range fs {
+		if f.Code == CodeEncodingStrayBytes {
+			return f
+		}
+	}
+	t.Fatalf("no ENCODING_STRAY_BYTES in %v", codes(fs))
+	return nil
+}
+
 // A UTF-8 file with one stray Latin-1 byte: decoded as UTF-8, only the stray
-// byte read as Windows-1252, reported as ENCODING_BAD_BYTES on its line.
+// byte read as Windows-1252, reported as ENCODING_STRAY_BYTES on its line.
 func TestDecodeMixedUTF8Latin1(t *testing.T) {
 	out, info, fs := Decode(readEnc(t, "mixed-utf8-latin1.ged"))
 	want := "0 HEAD\r\n1 GEDC\r\n2 VERS 5.5.1\r\n1 CHAR UTF-8\r\n0 @I1@ INDI\r\n" +
@@ -29,7 +40,7 @@ func TestDecodeMixedUTF8Latin1(t *testing.T) {
 	if info.Detected != "UTF-8" || info.Declared != "UTF-8" {
 		t.Errorf("info = %+v", info)
 	}
-	if got := codes(fs); !reflect.DeepEqual(got, []string{CodeEncodingBadBytes}) {
+	if got := codes(fs); !reflect.DeepEqual(got, []string{CodeEncodingStrayBytes}) {
 		t.Fatalf("codes = %v", got)
 	}
 	f := fs[0]
@@ -48,8 +59,22 @@ func TestDecodeMixedAfterBOM(t *testing.T) {
 	if info.Detected != "UTF-8" || info.Reason != "byte order mark" {
 		t.Errorf("info = %+v", info)
 	}
-	if f := badBytesFinding(t, fs); f.Line != 9 || f.Details["count"] != "1" {
+	if f := strayFinding(t, fs); f.Line != 9 || f.Details["count"] != "1" {
 		t.Errorf("finding = line %d %v", f.Line, f.Details)
+	}
+}
+
+// Stray bytes on two lines: one ENCODING_STRAY_BYTES (warning) on the first
+// affected line with the total count and the encoding; no ENCODING_BAD_BYTES,
+// since nothing became U+FFFD.
+func TestDecodeStrayBytesFinding(t *testing.T) {
+	_, _, fs := Decode([]byte("0 HEAD\n1 CHAR UTF-8\n1 NOTE ü ö ä é\n1 NOTE \xe9\xe8\n1 NOTE ok\n1 NOTE \xe0\n0 TRLR\n"))
+	if got := codes(fs); !reflect.DeepEqual(got, []string{CodeEncodingStrayBytes}) {
+		t.Fatalf("codes = %v", got)
+	}
+	f := fs[0]
+	if f.Severity != "warning" || f.Line != 4 || f.Details["count"] != "3" || f.Details["encoding"] != "UTF-8" {
+		t.Errorf("finding = line %d sev %s %v", f.Line, f.Severity, f.Details)
 	}
 }
 

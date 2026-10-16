@@ -149,6 +149,7 @@ func TestDecodeSeverities(t *testing.T) {
 	want := map[string]string{
 		CodeEncodingNotUTF8: "hint", CodeEncodingMislabeled: "warning",
 		CodeEncodingUndeclared: "hint", CodeEncodingBadBytes: "warning",
+		CodeEncodingStrayBytes: "warning",
 	}
 	for code, sev := range want {
 		if got := newParseError(code, 1, "x", "").Severity; got != sev {

@@ -46,6 +46,7 @@ const (
 	CodeEncodingMislabeled = "ENCODING_MISLABELED"
 	CodeEncodingUndeclared = "ENCODING_UNDECLARED"
 	CodeEncodingBadBytes   = "ENCODING_BAD_BYTES"
+	CodeEncodingStrayBytes = "ENCODING_STRAY_BYTES"
 )
 
 var codeSeverity = map[string]string{
@@ -66,6 +67,7 @@ var codeSeverity = map[string]string{
 	CodeEncodingMislabeled: "warning",
 	CodeEncodingUndeclared: "hint",
 	CodeEncodingBadBytes:   "warning",
+	CodeEncodingStrayBytes: "warning",
 }
 
 func newParseError(code string, line int, message, ctx string) *ParseError {

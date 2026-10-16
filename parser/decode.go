@@ -105,7 +105,7 @@ func lineAt(b []byte, idx int) int {
 // choice against the bytes. A file meant to be UTF-8 (by its byte order mark,
 // its CHAR or no CHAR) that has a few invalid bytes is still read as UTF-8
 // when its valid multi-byte sequences outnumber the invalid bytes; each
-// invalid byte is then read as Windows-1252 (ENCODING_BAD_BYTES). Otherwise
+// invalid byte is then read as Windows-1252 (ENCODING_STRAY_BYTES). Otherwise
 // such a file is read as Windows-1252 throughout (ENCODING_MISLABELED).
 // Decode never fails: bytes that cannot be decoded become U+FFFD and are
 // reported in the findings.
@@ -358,7 +358,7 @@ func utf8Counts(b []byte) (multi, invalid int) {
 }
 
 // mixed decodes b as UTF-8 and reads each byte that is not valid UTF-8 as
-// Windows-1252. It reports ENCODING_BAD_BYTES (count = bytes converted) on
+// Windows-1252. It reports ENCODING_STRAY_BYTES (count = bytes converted) on
 // the first affected line.
 func (d *decoder) mixed(b []byte) []byte {
 	out := make([]byte, 0, len(b)+16)
@@ -374,8 +374,13 @@ func (d *decoder) mixed(b []byte) []byte {
 		i += size
 	}
 	n := len(d.strayAt)
-	d.badBytesFinding(lineAt(out, d.strayAt[0]), n,
-		fmt.Sprintf("%d byte(s) are not valid UTF-8; read as Windows-1252", n))
+	f := newParseError(CodeEncodingStrayBytes, lineAt(out, d.strayAt[0]),
+		fmt.Sprintf("%d byte(s) are not valid UTF-8; read as Windows-1252", n), "")
+	f.Details = map[string]string{"encoding": d.info.Detected, "count": strconv.Itoa(n)}
+	if d.info.Declared != "" {
+		f.Details["declared"] = d.info.Declared
+	}
+	d.findings = append(d.findings, f)
 	return out
 }
 

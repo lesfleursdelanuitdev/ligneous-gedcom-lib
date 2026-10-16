@@ -33,6 +33,7 @@ var parserCodes = []string{
 	"EMPTY_LINE", "LINE_TOO_LONG", "LEADING_WHITESPACE", "BAD_LINE", "BAD_LEVEL", "XREF_WITHOUT_TAG",
 	"TOO_DEEP", "READ_ERROR", "LINES_BEFORE_HEAD", "LEVEL_JUMP", "UNKNOWN_RECORD",
 	"ENCODING_NOT_UTF8", "ENCODING_MISLABELED", "ENCODING_UNDECLARED", "ENCODING_BAD_BYTES",
+	"ENCODING_STRAY_BYTES",
 }
 
 // codeConstants returns the string values of the Code* constants in a Go file.
@@ -141,6 +142,7 @@ var placeholderKeys = map[string][]string{
 	"ENCODING_NOT_UTF8":               []string{"encoding"},
 	"ENCODING_MISLABELED":             {"declared", "encoding"},
 	"ENCODING_BAD_BYTES":              {"count"},
+	"ENCODING_STRAY_BYTES":            {"count"},
 	"LINES_BEFORE_HEAD":               {"count"},
 	"UNKNOWN_RECORD":                  {"tag"},
 	"HEADER_MISSING_SUBM":             {"gedcom_version"},
@@ -332,5 +334,25 @@ func TestPlaceholdersAreFillable(t *testing.T) {
 				t.Errorf("%s: no fixture finding carries Details[%q]", code, k)
 			}
 		}
+	}
+}
+
+// The two encoding codes have the wording momolig chose: STRAY for bytes
+// converted in a UTF-8 file, BAD_BYTES for U+FFFD.
+func TestEncodingByteWording(t *testing.T) {
+	s, ok := Lookup("ENCODING_STRAY_BYTES")
+	if !ok {
+		t.Fatal("no ENCODING_STRAY_BYTES entry")
+	}
+	want := Entry{Code: "ENCODING_STRAY_BYTES", Group: "format",
+		Title:    "Some characters were in a different encoding",
+		Meaning:  "{count} characters were in a different encoding from the rest of the file. We've read them as best we can \u2014 check the names and places on these lines.",
+		HowToFix: "Look at the names and places on these lines in your program and correct any letter that looks wrong. The repaired file keeps the letters as we read them."}
+	if s != want {
+		t.Errorf("ENCODING_STRAY_BYTES =\n%+v\nwant\n%+v", s, want)
+	}
+	b, _ := Lookup("ENCODING_BAD_BYTES")
+	if b.Title != "{count} characters couldn't be read" || !strings.Contains(b.Meaning, "show as \uFFFD") {
+		t.Errorf("ENCODING_BAD_BYTES changed: %+v", b)
 	}
 }
