@@ -1,0 +1,821 @@
+{
+ "comprehensive551.ged": {
+  "sha256": "50e4bd27d3f093ee42d09663146637db9fd3609af445bd7ae34c6d5fa95b7ffa",
+  "len": 4693,
+  "changes": [],
+  "left": []
+ },
+ "encodings/ansel-junk-before-head.ged": {
+  "sha256": "bae96200a3141b753253456bed5796e570dfef01670dd3edccaa96e67c161164",
+  "len": 131,
+  "changes": [
+   {
+    "line": 0,
+    "what": "converted from ANSEL to UTF-8"
+   },
+   {
+    "line": 6,
+    "what": "set the character set to UTF-8"
+   }
+  ],
+  "left": [
+   "HEADER_MISSING_SUBM",
+   "LINES_BEFORE_HEAD"
+  ]
+ },
+ "encodings/ansel.ged": {
+  "sha256": "fe1e4c932ffccf750570ef3eec9e8d5ff9c2c20499d5ace27f3dc89fbeb0a99e",
+  "len": 112,
+  "changes": [
+   {
+    "line": 0,
+    "what": "converted from ANSEL to UTF-8"
+   },
+   {
+    "line": 4,
+    "what": "set the character set to UTF-8"
+   }
+  ],
+  "left": [
+   "HEADER_MISSING_SUBM"
+  ]
+ },
+ "encodings/ansi-declared-utf8.ged": {
+  "sha256": "f71aea480be792c8d244e1d422c1b3e3dbf60c16be84555584be8950125e0b8c",
+  "len": 111,
+  "changes": [
+   {
+    "line": 4,
+    "what": "set the character set to UTF-8"
+   },
+   {
+    "line": 6,
+    "what": "read 2 characters as UTF-8 (the header said ANSI)"
+   },
+   {
+    "line": 7,
+    "what": "converted 1 stray Windows-1252 characters to UTF-8"
+   }
+  ],
+  "left": [
+   "ENCODING_MISLABELED",
+   "HEADER_MISSING_SUBM"
+  ]
+ },
+ "encodings/ansi.ged": {
+  "sha256": "fe1e4c932ffccf750570ef3eec9e8d5ff9c2c20499d5ace27f3dc89fbeb0a99e",
+  "len": 112,
+  "changes": [
+   {
+    "line": 0,
+    "what": "converted from Windows-1252 to UTF-8"
+   },
+   {
+    "line": 4,
+    "what": "set the character set to UTF-8"
+   }
+  ],
+  "left": [
+   "HEADER_MISSING_SUBM"
+  ]
+ },
+ "encodings/bom-utf8-char-ansel.ged": {
+  "sha256": "fe1e4c932ffccf750570ef3eec9e8d5ff9c2c20499d5ace27f3dc89fbeb0a99e",
+  "len": 112,
+  "changes": [
+   {
+    "line": 0,
+    "what": "removed the byte order mark"
+   },
+   {
+    "line": 4,
+    "what": "set the character set to UTF-8"
+   }
+  ],
+  "left": [
+   "HEADER_MISSING_SUBM"
+  ]
+ },
+ "encodings/conc-split-utf8-few.ged": {
+  "sha256": "9c9595dc1691d5010ba05f5badd0b0a47e8582beb071caa9ec0166dfe0cc6b94",
+  "len": 118,
+  "changes": [
+   {
+    "line": 7,
+    "what": "joined a character split across lines 7 and 8"
+   }
+  ],
+  "left": [
+   "HEADER_MISSING_SUBM"
+  ]
+ },
+ "encodings/conc-split-utf8-many.ged": {
+  "sha256": "a15fb4e70bd91cc151fa7dae550a06674c6d4876affd4dd3b05878c3597a4e5d",
+  "len": 179,
+  "changes": [
+   {
+    "line": 9,
+    "what": "joined a character split across lines 9 and 10"
+   },
+   {
+    "line": 11,
+    "what": "joined a character split across lines 11 and 12"
+   }
+  ],
+  "left": [
+   "HEADER_MISSING_SUBM"
+  ]
+ },
+ "encodings/mislabeled-utf8-as-ansel.ged": {
+  "sha256": "fe1e4c932ffccf750570ef3eec9e8d5ff9c2c20499d5ace27f3dc89fbeb0a99e",
+  "len": 112,
+  "changes": [
+   {
+    "line": 4,
+    "what": "set the character set to UTF-8"
+   },
+   {
+    "line": 6,
+    "what": "read 2 characters as UTF-8 (the header said ANSEL)"
+   },
+   {
+    "line": 8,
+    "what": "read 1 characters as UTF-8 (the header said ANSEL)"
+   }
+  ],
+  "left": [
+   "ENCODING_MISLABELED",
+   "HEADER_MISSING_SUBM"
+  ]
+ },
+ "encodings/mixed-utf8-latin1.ged": {
+  "sha256": "f707d5f24e631186d99b63f56bf851be69c9710af2c2acde1ee1ca2fa5e9548c",
+  "len": 135,
+  "changes": [
+   {
+    "line": 9,
+    "what": "converted 1 stray Windows-1252 characters to UTF-8"
+   }
+  ],
+  "left": [
+   "HEADER_MISSING_SUBM"
+  ]
+ },
+ "encodings/undeclared-latin1.ged": {
+  "sha256": "fe1e4c932ffccf750570ef3eec9e8d5ff9c2c20499d5ace27f3dc89fbeb0a99e",
+  "len": 112,
+  "changes": [
+   {
+    "line": 0,
+    "what": "converted from Windows-1252 to UTF-8"
+   },
+   {
+    "line": 1,
+    "what": "set the character set to UTF-8"
+   }
+  ],
+  "left": [
+   "HEADER_MISSING_SUBM"
+  ]
+ },
+ "encodings/utf16be-nobom.ged": {
+  "sha256": "fe1e4c932ffccf750570ef3eec9e8d5ff9c2c20499d5ace27f3dc89fbeb0a99e",
+  "len": 112,
+  "changes": [
+   {
+    "line": 0,
+    "what": "converted from UTF-16BE to UTF-8"
+   },
+   {
+    "line": 4,
+    "what": "set the character set to UTF-8"
+   }
+  ],
+  "left": [
+   "HEADER_MISSING_SUBM"
+  ]
+ },
+ "encodings/utf16le-bom.ged": {
+  "sha256": "fe1e4c932ffccf750570ef3eec9e8d5ff9c2c20499d5ace27f3dc89fbeb0a99e",
+  "len": 112,
+  "changes": [
+   {
+    "line": 0,
+    "what": "converted from UTF-16LE to UTF-8"
+   },
+   {
+    "line": 0,
+    "what": "removed the byte order mark"
+   },
+   {
+    "line": 4,
+    "what": "set the character set to UTF-8"
+   }
+  ],
+  "left": [
+   "HEADER_MISSING_SUBM"
+  ]
+ },
+ "encodings/utf8-tie.ged": {
+  "sha256": "74e04aab6cb387f35993bcf9cb4a8f46fdc483efe834f198b93dfaa2a693f6e1",
+  "len": 101,
+  "changes": [
+   {
+    "line": 7,
+    "what": "converted 1 stray Windows-1252 characters to UTF-8"
+   }
+  ],
+  "left": [
+   "HEADER_MISSING_SUBM"
+  ]
+ },
+ "encodings/utf8.ged": {
+  "sha256": "fe1e4c932ffccf750570ef3eec9e8d5ff9c2c20499d5ace27f3dc89fbeb0a99e",
+  "len": 112,
+  "changes": [],
+  "left": [
+   "HEADER_MISSING_SUBM"
+  ]
+ },
+ "malformed/circular-reference.ged": {
+  "sha256": "e056b9f9c286c900dc9db478bec5cea15aeb91bab0be5697a25050cc04e36399",
+  "len": 374,
+  "changes": [],
+  "left": [
+   "HEADER_MISSING_SUBM",
+   "NAME_MISSING_SURNAME_SLASH",
+   "SWAPPED_OPPOSITE_SEX_SPOUSE_TAGS"
+  ]
+ },
+ "malformed/duplicate-xref.ged": {
+  "sha256": "f5cb1fa5891481c5fecc0ee979e631525a8b3e0573fb15bea0dc88fd37d2dd8c",
+  "len": 242,
+  "changes": [],
+  "left": [
+   "HEADER_MISSING_SUBM",
+   "NAME_MISSING_SURNAME_SLASH"
+  ]
+ },
+ "malformed/invalid-level.ged": {
+  "sha256": "9a527eca2dd5b5b09326f5ba838d8181a46f84d12efa4b5f54e85f5951e96db2",
+  "len": 123,
+  "changes": [
+   {
+    "line": 1,
+    "what": "set the character set to UTF-8"
+   }
+  ],
+  "left": [
+   "HEADER_MISSING_SUBM",
+   "LEVEL_JUMP",
+   "NAME_MISSING_SURNAME_SLASH"
+  ]
+ },
+ "malformed/invalid-xref.ged": {
+  "sha256": "47ba3bf23dd67d1347f330cb87be164016a4a712b0620deb0edd507b7a6fec04",
+  "len": 89,
+  "changes": [
+   {
+    "line": 1,
+    "what": "set the character set to UTF-8"
+   }
+  ],
+  "left": [
+   "HEADER_MISSING_SUBM",
+   "ORPHANED_FAMC"
+  ]
+ },
+ "malformed/missing-header.ged": {
+  "sha256": "5b7e96fd0fc5086eddf5cd97c7fc864568ba5e523bfa5a66fed49b6afb126ca4",
+  "len": 37,
+  "changes": [],
+  "left": [
+   "ENCODING_UNDECLARED",
+   "MISSING_HEADER"
+  ]
+ },
+ "malformed/missing-xref.ged": {
+  "sha256": "401738a8d1130c2feb87f1b963406eaa0c3ad2b56aee1269c4f12bcab1b7d012",
+  "len": 89,
+  "changes": [
+   {
+    "line": 1,
+    "what": "set the character set to UTF-8"
+   }
+  ],
+  "left": [
+   "HEADER_MISSING_SUBM",
+   "NAME_MISSING_SURNAME_SLASH",
+   "ORPHANED_FAMS"
+  ]
+ },
+ "malformed/structure.ged": {
+  "sha256": "77ee40ed0031853f75eceeb68b07a939ed67d3e163ae7bad0ebd355d0a7f6dad",
+  "len": 132,
+  "changes": [],
+  "left": [
+   "LEVEL_JUMP",
+   "LINES_BEFORE_HEAD",
+   "UNKNOWN_RECORD"
+  ]
+ },
+ "minimal55.ged": {
+  "sha256": "619d92c3d8934bd771cb5514960a3881f1091db6acdebb9aaa55885256b34c6c",
+  "len": 170,
+  "changes": [
+   {
+    "line": 5,
+    "what": "set the character set to UTF-8"
+   }
+  ],
+  "left": [
+   "HEADER_MISSING_SUBM"
+  ]
+ },
+ "minimal551.ged": {
+  "sha256": "c8bdf4e7ce9d6a5c2fb4a1472cb250dfa5ee756042c6a5e94128147ebd7eafad",
+  "len": 204,
+  "changes": [],
+  "left": [
+   "HEADER_MISSING_SUBM"
+  ]
+ },
+ "pres2020.ged": {
+  "sha256": "4f29a8deee34c462590cec81374965b3a26d24fc280538255abced3d9e6406a7",
+  "len": 1106165,
+  "changes": [
+   {
+    "line": 0,
+    "what": "removed the byte order mark"
+   }
+  ],
+  "left": [
+   "BURIAL_BEFORE_DEATH",
+   "EVENT_DATE_UNPARSEABLE",
+   "LINE_TOO_LONG",
+   "MARRIED_BELOW_MINIMUM_AGE",
+   "NAME_MISSING_SURNAME_SLASH"
+  ]
+ },
+ "repair/blank-lines.ged": {
+  "sha256": "9a24d65b0707f707c364b23d2e3808f25dee3fc148c237467167eed451f3c84c",
+  "len": 132,
+  "changes": [
+   {
+    "line": 8,
+    "what": "removed a blank line"
+   },
+   {
+    "line": 11,
+    "what": "removed a blank line"
+   },
+   {
+    "line": 13,
+    "what": "removed a blank line"
+   },
+   {
+    "line": 14,
+    "what": "removed a blank line"
+   },
+   {
+    "line": 16,
+    "what": "removed a blank line"
+   }
+  ],
+  "left": [
+   "HEADER_MISSING_SUBM",
+   "LINES_BEFORE_HEAD"
+  ]
+ },
+ "repair/cr-only.ged": {
+  "sha256": "128790f81000a83ffbb1b2d6e9e19328123cb4593e6d4db3cd9f1f087b843384",
+  "len": 107,
+  "changes": [
+   {
+    "line": 0,
+    "what": "changed line endings to CRLF"
+   }
+  ],
+  "left": [
+   "HEADER_MISSING_SUBM"
+  ]
+ },
+ "repair/custom-tags.ged": {
+  "sha256": "ae3598b472a4ba46e1a855648259ea10f26cbf90c5b9191423a0f64a6ca16a8f",
+  "len": 203,
+  "changes": [
+   {
+    "line": 12,
+    "what": "removed a blank line"
+   }
+  ],
+  "left": [
+   "HEADER_MISSING_SUBM",
+   "UNKNOWN_RECORD"
+  ]
+ },
+ "repair/double-space-refs.ged": {
+  "sha256": "d0e2d9655122a96b9432d8c956d6caedf1bc9f91b516a9120403defc8e42b867",
+  "len": 449,
+  "changes": [],
+  "left": [
+   "HEADER_MISSING_SUBM"
+  ]
+ },
+ "repair/double-space-values.ged": {
+  "sha256": "e77a886c15df1a32c04c87864e313166c8c208d350167f50dc6d8e59d4645e7e",
+  "len": 593,
+  "changes": [],
+  "left": [
+   "HEADER_MISSING_SUBM"
+  ]
+ },
+ "repair/leading-space.ged": {
+  "sha256": "d74759b73b18d0742a26116f2b58aebcde0e8d8828559a742f9e472f0140fd57",
+  "len": 148,
+  "changes": [
+   {
+    "line": 6,
+    "what": "removed spaces before the level number"
+   },
+   {
+    "line": 7,
+    "what": "removed spaces before the level number"
+   },
+   {
+    "line": 9,
+    "what": "removed spaces before the level number"
+   },
+   {
+    "line": 10,
+    "what": "removed spaces before the level number"
+   }
+  ],
+  "left": [
+   "HEADER_MISSING_SUBM"
+  ]
+ },
+ "repair/long-note.ged": {
+  "sha256": "ccdbe298fbbe70bb6fb517cadbe538d1a024751e6209916a6e250e590410cb55",
+  "len": 1659,
+  "changes": [
+   {
+    "line": 8,
+    "what": "split a 298-character line into 2 lines"
+   },
+   {
+    "line": 9,
+    "what": "split a 599-character line into 3 lines"
+   },
+   {
+    "line": 11,
+    "what": "split a 279-character line into 2 lines"
+   },
+   {
+    "line": 12,
+    "what": "split a 300-character line into 2 lines"
+   }
+  ],
+  "left": [
+   "HEADER_MISSING_SUBM"
+  ]
+ },
+ "repair/long-unsplittable.ged": {
+  "sha256": "200541032c4819d6a86180a36a23ebfe859a7ab0e7acf3058f7f8d651411e578",
+  "len": 3970,
+  "changes": [],
+  "left": [
+   "HEADER_MISSING_SUBM",
+   "LEVEL_JUMP",
+   "LINE_TOO_LONG",
+   "ORPHANED_NOTE"
+  ]
+ },
+ "repair/no-char.ged": {
+  "sha256": "cca718cf3edd3881a06ea1ef546c873c7f8cafe96d0790c953f14c69bb6d5348",
+  "len": 136,
+  "changes": [
+   {
+    "line": 1,
+    "what": "set the character set to UTF-8"
+   }
+  ],
+  "left": [
+   "HEADER_MISSING_SUBM"
+  ]
+ },
+ "repair/no-trailer.ged": {
+  "sha256": "6e857f8bf846ba9741492d0ee071ce376a4f22f7ef2e38a7394b1c6c4cf6c095",
+  "len": 99,
+  "changes": [
+   {
+    "line": 8,
+    "what": "added the end-of-file marker (0 TRLR)"
+   }
+  ],
+  "left": [
+   "HEADER_MISSING_SUBM"
+  ]
+ },
+ "repair/single-space-refs.ged": {
+  "sha256": "051a6bac3948fbbe0cfb2163c202831670015dcda2eda25039b77b80efefa612",
+  "len": 444,
+  "changes": [],
+  "left": [
+   "HEADER_MISSING_SUBM"
+  ]
+ },
+ "repair/single-space-values.ged": {
+  "sha256": "ad2c0f5eaa5faa09c28c74b844056a466e54b6d54ed600300519bbd536533dd6",
+  "len": 570,
+  "changes": [],
+  "left": [
+   "HEADER_MISSING_SUBM"
+  ]
+ },
+ "repair/unicode-space-1252.ged": {
+  "sha256": "d55d99756e9564a12fa58bc90128aec61e286b448db9fead23a4ad5895b0283b",
+  "len": 473,
+  "changes": [
+   {
+    "line": 0,
+    "what": "converted from Windows-1252 to UTF-8"
+   },
+   {
+    "line": 5,
+    "what": "set the character set to UTF-8"
+   },
+   {
+    "line": 8,
+    "what": "split a 354-character line into 2 lines"
+   }
+  ],
+  "left": [
+   "HEADER_MISSING_SUBM"
+  ]
+ },
+ "repair/unicode-space.ged": {
+  "sha256": "9bbdf9c16f4f8e8da28848e3718a2ff78faa77cee927fc0793ebb0e8b4886dba",
+  "len": 827,
+  "changes": [
+   {
+    "line": 8,
+    "what": "split a 354-character line into 2 lines"
+   },
+   {
+    "line": 9,
+    "what": "split a 353-character line into 2 lines"
+   }
+  ],
+  "left": [
+   "HEADER_MISSING_SUBM"
+  ]
+ },
+ "royal92.ged": {
+  "sha256": "6f8bed015ff043357d99790b44494bb40eebd4c491ffabca4b7df4f7f0282083",
+  "len": 499666,
+  "changes": [
+   {
+    "line": 0,
+    "what": "converted from ANSEL to UTF-8"
+   },
+   {
+    "line": 6,
+    "what": "set the character set to UTF-8"
+   }
+  ],
+  "left": [
+   "CHILD_BORN_BEFORE_FATHER",
+   "CHILD_BORN_BEFORE_MOTHER",
+   "DEATH_BEFORE_BIRTH",
+   "EVENT_DATE_UNPARSEABLE",
+   "FATHER_TOO_OLD_AT_CHILD_BIRTH",
+   "FATHER_TOO_YOUNG_AT_CHILD_BIRTH",
+   "MARRIAGE_BEFORE_SPOUSE_BIRTH",
+   "MARRIED_BELOW_MINIMUM_AGE",
+   "MOTHER_TOO_YOUNG_AT_CHILD_BIRTH"
+  ]
+ },
+ "unreadable/ANSEL long line with bad": {
+  "sha256": "642d8e24a060af5230d89485094076c40b31e2d49caabb69ab51bbeb52038cca",
+  "len": 364,
+  "changes": [
+   {
+    "line": 0,
+    "what": "converted from ANSEL to UTF-8"
+   },
+   {
+    "line": 2,
+    "what": "set the character set to UTF-8"
+   },
+   {
+    "line": 4,
+    "what": "replaced 1 unreadable characters with �"
+   },
+   {
+    "line": 4,
+    "what": "split a 308-character line into 2 lines"
+   }
+  ],
+  "left": [
+   "ENCODING_BAD_BYTES",
+   "MISSING_NAME"
+  ]
+ },
+ "unreadable/ANSEL mark at EOF": {
+  "sha256": "e3a02889d932aa608fb75ffaf61e3e659fdd1d685f0e7dbd2e8b71ca61810351",
+  "len": 58,
+  "changes": [
+   {
+    "line": 0,
+    "what": "converted from ANSEL to UTF-8"
+   },
+   {
+    "line": 2,
+    "what": "set the character set to UTF-8"
+   },
+   {
+    "line": 4,
+    "what": "replaced 1 unreadable characters with �"
+   },
+   {
+    "line": 5,
+    "what": "added the end-of-file marker (0 TRLR)"
+   }
+  ],
+  "left": [
+   "ENCODING_BAD_BYTES",
+   "MISSING_NAME"
+  ]
+ },
+ "unreadable/ANSEL mark before deep CONC": {
+  "sha256": "7fbf6b21bc3ded04efd26bb263aac67c0f05f421209d3e00e7fd4d780194c029",
+  "len": 68,
+  "changes": [
+   {
+    "line": 0,
+    "what": "converted from ANSEL to UTF-8"
+   },
+   {
+    "line": 2,
+    "what": "set the character set to UTF-8"
+   },
+   {
+    "line": 4,
+    "what": "replaced 1 unreadable characters with �"
+   }
+  ],
+  "left": [
+   "ENCODING_BAD_BYTES",
+   "LEVEL_JUMP",
+   "MISSING_NAME"
+  ]
+ },
+ "unreadable/ANSEL mark before sibling CONC": {
+  "sha256": "8ea00566767537f3e1d44a678582375c7113acec1d437824add81c89fd11883a",
+  "len": 68,
+  "changes": [
+   {
+    "line": 0,
+    "what": "converted from ANSEL to UTF-8"
+   },
+   {
+    "line": 2,
+    "what": "set the character set to UTF-8"
+   },
+   {
+    "line": 4,
+    "what": "replaced 1 unreadable characters with �"
+   }
+  ],
+  "left": [
+   "ENCODING_BAD_BYTES",
+   "MISSING_NAME"
+  ]
+ },
+ "unreadable/ANSEL stranded mark": {
+  "sha256": "e530cf800ea1530e6045a4c4342a35c238c8d4d5ce7586cbf134c4553872521e",
+  "len": 67,
+  "changes": [
+   {
+    "line": 0,
+    "what": "converted from ANSEL to UTF-8"
+   },
+   {
+    "line": 2,
+    "what": "set the character set to UTF-8"
+   },
+   {
+    "line": 4,
+    "what": "replaced 1 unreadable characters with �"
+   }
+  ],
+  "left": [
+   "ENCODING_BAD_BYTES",
+   "MISSING_NAME"
+  ]
+ },
+ "unreadable/ANSEL undefined byte": {
+  "sha256": "79132d25d98ef4ec4695c2bda507c976d08b66f4fb6143a9e8fefcd5edbac2d8",
+  "len": 80,
+  "changes": [
+   {
+    "line": 0,
+    "what": "converted from ANSEL to UTF-8"
+   },
+   {
+    "line": 2,
+    "what": "set the character set to UTF-8"
+   },
+   {
+    "line": 4,
+    "what": "replaced 2 unreadable characters with �"
+   },
+   {
+    "line": 5,
+    "what": "replaced 2 unreadable characters with �"
+   }
+  ],
+  "left": [
+   "ENCODING_BAD_BYTES"
+  ]
+ },
+ "unreadable/ANSI undefined byte": {
+  "sha256": "be16e37645566ace356827114cf618f886599eb70b03c0020cb72273489ce386",
+  "len": 66,
+  "changes": [
+   {
+    "line": 0,
+    "what": "converted from Windows-1252 to UTF-8"
+   },
+   {
+    "line": 2,
+    "what": "set the character set to UTF-8"
+   },
+   {
+    "line": 5,
+    "what": "replaced 1 unreadable characters with �"
+   }
+  ],
+  "left": [
+   "ENCODING_BAD_BYTES",
+   "NAME_MISSING_SURNAME_SLASH"
+  ]
+ },
+ "unreadable/BOM and stray byte": {
+  "sha256": "b57071e7932bc563ce7555b1e3d055cf303f58109a01295d131a3a8e082653b1",
+  "len": 55,
+  "changes": [
+   {
+    "line": 0,
+    "what": "removed the byte order mark"
+   },
+   {
+    "line": 4,
+    "what": "replaced 1 unreadable characters with �"
+   }
+  ],
+  "left": [
+   "ENCODING_BAD_BYTES"
+  ]
+ },
+ "unreadable/UTF-16 lone surrogate": {
+  "sha256": "0f7cb4e0ce74602b8af00ed3d3adb75ef5b2cfbccf04cbf6a52b8f433f9e3246",
+  "len": 57,
+  "changes": [
+   {
+    "line": 0,
+    "what": "converted from UTF-16LE to UTF-8"
+   },
+   {
+    "line": 0,
+    "what": "removed the byte order mark"
+   },
+   {
+    "line": 2,
+    "what": "set the character set to UTF-8"
+   },
+   {
+    "line": 4,
+    "what": "replaced 1 unreadable characters with �"
+   }
+  ],
+  "left": [
+   "ENCODING_BAD_BYTES",
+   "MISSING_NAME"
+  ]
+ },
+ "unreadable/mixed undefined byte": {
+  "sha256": "d3e3cc799d91be50ff850bda5043d84f57375a6a9e4cb9efbe32b91d9137e7a4",
+  "len": 75,
+  "changes": [
+   {
+    "line": 5,
+    "what": "replaced 1 unreadable characters with �"
+   }
+  ],
+  "left": [
+   "ENCODING_BAD_BYTES"
+  ]
+ }
+}
