@@ -234,7 +234,7 @@ func validateMarriageAndBirthWarnings(doc *gedcom.GedcomDocument, opts *Options,
 					Message:     fmt.Sprintf("Marriage year %d is before this individual's birth year %d", mYear, birthYear),
 					Xref:        indi.Xref,
 					RelatedXref: fam.Xref,
-					Details:     map[string]string{"family": fam.Xref},
+					Details:     map[string]string{"family": fam.Xref, "marriage_year": strconv.Itoa(mYear)},
 					Line:        marriageDateLine(fam),
 				})
 			}
