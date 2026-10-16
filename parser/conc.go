@@ -1,5 +1,7 @@
 package parser
 
+import "unicode/utf8"
+
 // The helpers below look at raw lines before decoding. The level, xref, tag
 // and "CONC" are ASCII in every single-byte encoding and in UTF-8.
 
@@ -101,4 +103,50 @@ func concNext(cur, rest []byte) int {
 		return n
 	}
 	return 0
+}
+
+// splitRune reports whether b[i], a byte that is not valid UTF-8 where it
+// stands, starts a UTF-8 character cut at the end of its line and finished
+// by the first bytes of the next line's value, that line being a CONC
+// continuation of this one (concNext). Some exporters cut CONC lines by
+// bytes. It returns the end of the line e, the offset v of the CONC value
+// and the number of value bytes, rest, that finish the character.
+func splitRune(b []byte, i int) (e, v, rest int, ok bool) {
+	var need int
+	switch c := b[i]; {
+	case c >= 0xC2 && c <= 0xDF:
+		need = 2
+	case c >= 0xE0 && c <= 0xEF:
+		need = 3
+	case c >= 0xF0 && c <= 0xF4:
+		need = 4
+	default:
+		return 0, 0, 0, false
+	}
+	e = i + 1
+	for e < len(b) && e-i < need && b[e] >= 0x80 && b[e] <= 0xBF {
+		e++
+	}
+	if e >= len(b) || e-i >= need || (b[e] != '\r' && b[e] != '\n') {
+		return 0, 0, 0, false
+	}
+	next := e + 1
+	if b[e] == '\r' && next < len(b) && b[next] == '\n' {
+		next++
+	}
+	n := concNext(b[lineStart(b, i):i], b[next:])
+	if n == 0 {
+		return 0, 0, 0, false
+	}
+	v, rest = next+n, need-(e-i)
+	if v+rest > len(b) {
+		return 0, 0, 0, false
+	}
+	var buf [utf8.UTFMax]byte
+	k := copy(buf[:], b[i:e])
+	copy(buf[k:], b[v:v+rest])
+	if r, size := utf8.DecodeRune(buf[:need]); r == utf8.RuneError || size != need {
+		return 0, 0, 0, false
+	}
+	return e, v, rest, true
 }

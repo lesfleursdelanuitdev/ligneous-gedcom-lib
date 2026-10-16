@@ -269,3 +269,86 @@ func TestDecodeANSELMarkConcLevel(t *testing.T) {
 		})
 	}
 }
+
+// UTF-8 characters cut across a CONC line by an exporter that splits lines
+// by bytes. The pair counts as one valid multi-byte sequence, so the file
+// stays UTF-8; the whole character moves to the start of the CONC value.
+func TestDecodeUTF8SplitAcrossConc(t *testing.T) {
+	cases := []struct {
+		file  string
+		text  string // decoded text must contain this
+		fixes []LineFix
+		codes []string
+	}{
+		{"conc-split-utf8-few.ged", "1 NOTE Caf\r\n2 CONC é au lait\r\n", []LineFix{{Line: 7, Moved: 1}}, []string{}},
+		{"conc-split-utf8-many.ged", "1 NOTE Caf\r\n2 CONC é au lait\r\n1 NOTE Prix 10\r\n2 CONC €, payé\r\n",
+			[]LineFix{{Line: 9, Moved: 1}, {Line: 11, Moved: 1}}, []string{}},
+	}
+	for _, c := range cases {
+		t.Run(c.file, func(t *testing.T) {
+			out, info, fs, fixes := DecodeReport(readEnc(t, c.file))
+			if !strings.Contains(string(out), c.text) {
+				t.Errorf("decoded %q lacks %q", out, c.text)
+			}
+			if info.Detected != "UTF-8" {
+				t.Errorf("info = %+v", info)
+			}
+			if got := codes(fs); !reflect.DeepEqual(got, c.codes) {
+				t.Errorf("codes = %v, want %v", got, c.codes)
+			}
+			if !reflect.DeepEqual(fixes, c.fixes) {
+				t.Errorf("fixes = %+v, want %+v", fixes, c.fixes)
+			}
+		})
+	}
+}
+
+// The split pair is joined only across a real CONC continuation (the same
+// level rule as ANSEL). Before a sibling CONC the two bytes stay stray.
+func TestDecodeUTF8SplitNeedsContinuation(t *testing.T) {
+	raw := []byte("0 HEAD\n1 CHAR UTF-8\n1 NAME Renée /Dupré/\n2 PLAC Zürich\n1 NOTE Caf\xC3\n1 CONC \xA9 au lait\n0 TRLR\n")
+	out, _, fs, fixes := DecodeReport(raw)
+	if !strings.Contains(string(out), "1 NOTE CafÃ\n1 CONC © au lait\n") {
+		t.Errorf("decoded %q", out)
+	}
+	if f := strayFinding(t, fs); f.Details["count"] != "2" || f.Line != 5 {
+		t.Errorf("stray = line %d %v", f.Line, f.Details)
+	}
+	if want := []LineFix{{Line: 5, Stray: 1}, {Line: 6, Stray: 1}}; !reflect.DeepEqual(fixes, want) {
+		t.Errorf("fixes = %+v, want %+v", fixes, want)
+	}
+}
+
+// A tie (as many valid multi-byte sequences as invalid bytes) stays UTF-8.
+func TestDecodeTieStaysUTF8(t *testing.T) {
+	out, info, fs := Decode(readEnc(t, "utf8-tie.ged"))
+	if !strings.Contains(string(out), "1 NAME Renée /Dupont/\r\n1 NOTE ét\r\n") || info.Detected != "UTF-8" {
+		t.Errorf("decoded %q, info %+v", out, info)
+	}
+	if got := codes(fs); !reflect.DeepEqual(got, []string{CodeEncodingStrayBytes}) {
+		t.Errorf("codes = %v", got)
+	}
+}
+
+// A file declared ANSI whose bytes are UTF-8 with one stray byte goes the
+// mixed way too, with ENCODING_MISLABELED (declared ANSI, detected UTF-8).
+func TestDecodeDeclaredANSIMostlyUTF8(t *testing.T) {
+	out, info, fs := Decode(readEnc(t, "ansi-declared-utf8.ged"))
+	if !strings.Contains(string(out), "1 NAME Renée /Dupré/\r\n1 NOTE Café au lait\r\n") {
+		t.Errorf("decoded %q", out)
+	}
+	if info.Detected != "UTF-8" || info.Declared != "ANSI" {
+		t.Errorf("info = %+v", info)
+	}
+	if got := codes(fs); !reflect.DeepEqual(got, []string{CodeEncodingMislabeled, CodeEncodingStrayBytes}) {
+		t.Fatalf("codes = %v", got)
+	}
+	if m := fs[0]; m.Details["declared"] != "ANSI" || m.Details["encoding"] != "UTF-8" {
+		t.Errorf("mislabeled details %v", m.Details)
+	}
+	// With no valid multi-byte sequence, ANSI stays Windows-1252 throughout.
+	_, info, fs = Decode([]byte("0 HEAD\n1 CHAR ANSI\n1 NAME Ren\xe9e\n0 TRLR\n"))
+	if info.Detected != "Windows-1252" || !reflect.DeepEqual(codes(fs), []string{CodeEncodingNotUTF8}) {
+		t.Errorf("plain ANSI: info %+v codes %v", info, codes(fs))
+	}
+}

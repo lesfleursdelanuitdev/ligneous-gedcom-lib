@@ -183,3 +183,47 @@ func TestRepairUndefinedWindows1252Byte(t *testing.T) {
 		})
 	}
 }
+
+// Encoding fixtures for the mixed rule, each compared against the repaired
+// text and the enriched text it must give. These files are also in the
+// sample set of the safety tests.
+func TestRepairMixedRuleFixtures(t *testing.T) {
+	cases := []struct {
+		file    string
+		data    string   // the repaired file must contain this
+		changes []Change // exactly
+		notes   []string // enriched JSON must contain these
+	}{
+		{"conc-split-utf8-few.ged", "1 NAME Jean /Dupont/\r\n1 NOTE Caf\r\n2 CONC é au lait\r\n",
+			[]Change{{7, "moved a character split across lines onto line 8"}}, []string{`"Café au lait"`}},
+		{"conc-split-utf8-many.ged", "1 NOTE Caf\r\n2 CONC é au lait\r\n1 NOTE Prix 10\r\n2 CONC €, payé\r\n",
+			[]Change{{9, "moved a character split across lines onto line 10"}, {11, "moved a character split across lines onto line 12"}},
+			[]string{`"Café au lait"`, `"Prix 10€, payé"`, `"Renée /Dupré/"`, `"Zürich"`}},
+		{"utf8-tie.ged", "1 NAME Renée /Dupont/\r\n1 NOTE ét\r\n",
+			[]Change{{7, "converted 1 stray Windows-1252 characters to UTF-8"}}, []string{`"ét"`, `"Renée /Dupont/"`}},
+		{"ansi-declared-utf8.ged", "1 CHAR UTF-8\r\n0 @I1@ INDI\r\n1 NAME Renée /Dupré/\r\n1 NOTE Café au lait\r\n",
+			[]Change{{4, "set the character set to UTF-8"}, {7, "converted 1 stray Windows-1252 characters to UTF-8"}},
+			[]string{`"Café au lait"`, `"Renée /Dupré/"`}},
+	}
+	for _, c := range cases {
+		t.Run(c.file, func(t *testing.T) {
+			res, _ := repairFixture(t, "encodings/"+c.file)
+			if !strings.Contains(string(res.Data), c.data) {
+				t.Errorf("Data %q lacks %q", res.Data, c.data)
+			}
+			assertChanges(t, res.Changes, c.changes)
+			for _, code := range []string{"ENCODING_NOT_UTF8", "ENCODING_MISLABELED", "ENCODING_BAD_BYTES", "ENCODING_STRAY_BYTES"} {
+				assertLeftHas(t, res, code, false)
+			}
+			got := enrichedJSON(t, res.Data)
+			for _, s := range c.notes {
+				if !strings.Contains(got, s) {
+					t.Errorf("enriched output lacks %s", s)
+				}
+			}
+			if strings.Contains(got, "Ã") || strings.Contains(got, "©") {
+				t.Error("enriched output has mojibake")
+			}
+		})
+	}
+}
