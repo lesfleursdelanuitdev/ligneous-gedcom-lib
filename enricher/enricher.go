@@ -141,7 +141,7 @@ type enricherState struct {
 // findXref is FindByXref backed by an index built once per Enrich.
 func (e *enricherState) findXref(xref string) *gedcom.GedcomRecord {
 	if e.xrefIdx == nil {
-		e.xrefIdx = e.doc.XrefIndex()
+		e.xrefIdx = e.doc.RecordsByXref()
 	}
 	return e.xrefIdx[xref]
 }

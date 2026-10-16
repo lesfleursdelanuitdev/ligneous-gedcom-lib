@@ -2,7 +2,7 @@ package gedcom
 
 import "testing"
 
-func TestXrefIndexAgreesWithFindByXref(t *testing.T) {
+func TestRecordsByXrefAgreesWithFindByXref(t *testing.T) {
 	doc := &GedcomDocument{
 		Individuals:  []GedcomRecord{{Tag: "INDI", Xref: "@A@", Value: "indi"}, {Tag: "INDI", Xref: "@A@", Value: "indi-dup"}, {Tag: "INDI"}},
 		Families:     []GedcomRecord{{Tag: "FAM", Xref: "@A@", Value: "fam"}, {Tag: "FAM", Xref: "@F@"}},
@@ -12,7 +12,7 @@ func TestXrefIndexAgreesWithFindByXref(t *testing.T) {
 		Media:        []GedcomRecord{{Tag: "OBJE", Xref: "@M@"}},
 		Submitters:   []GedcomRecord{{Tag: "SUBM", Xref: "@U@"}, {Tag: "SUBM", Xref: "@M@", Value: "subm"}},
 	}
-	idx := doc.XrefIndex()
+	idx := doc.RecordsByXref()
 	for _, x := range []string{"@A@", "@F@", "@S@", "@N@", "@R@", "@M@", "@U@", "", "@missing@"} {
 		if got, want := idx[x], doc.FindByXref(x); got != want {
 			t.Errorf("xref %q: index %p, FindByXref %p", x, got, want)

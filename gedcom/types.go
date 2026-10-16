@@ -155,6 +155,8 @@ func (d *GedcomDocument) FindByXref(xref string) *GedcomRecord {
 }
 
 // XRefIndex builds and returns a map of xref -> *GedcomRecord for fast lookups.
+// Last record wins and empty xrefs are skipped; for FindByXref's first-wins
+// behaviour use RecordsByXref.
 func (d *GedcomDocument) XRefIndex() map[string]*GedcomRecord {
 	idx := make(map[string]*GedcomRecord)
 	for i := range d.Individuals {
@@ -195,16 +197,16 @@ func (d *GedcomDocument) XRefIndex() map[string]*GedcomRecord {
 	return idx
 }
 
-// XrefIndex returns a map of xref -> *GedcomRecord with the same lookup result
+// RecordsByXref returns a map of xref -> *GedcomRecord with the same lookup result
 // as FindByXref for every xref: when several records share an xref, the first
 // one in FindByXref's order wins (Individuals, Families, Sources, Notes,
 // Repositories, Media, Submitters). Records with an empty xref are included
-// under "" so that FindByXref("") and XrefIndex()[""] agree. This differs from
+// under "" so that FindByXref("") and RecordsByXref()[""] agree. This differs from
 // XRefIndex, where the last record wins and empty xrefs are skipped.
 //
 // The pointers point into the document's slices. Build the index after
 // parsing and do not append to those slices while it is in use.
-func (d *GedcomDocument) XrefIndex() map[string]*GedcomRecord {
+func (d *GedcomDocument) RecordsByXref() map[string]*GedcomRecord {
 	n := len(d.Individuals) + len(d.Families) + len(d.Sources) + len(d.Notes) +
 		len(d.Repositories) + len(d.Media) + len(d.Submitters)
 	idx := make(map[string]*GedcomRecord, n)

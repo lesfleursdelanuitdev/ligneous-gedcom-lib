@@ -99,3 +99,54 @@ func TestEnrichGeneratedMatchesGolden(t *testing.T) {
 		t.Fatalf("want %s got %s", want, got)
 	}
 }
+
+// TestEnrichDuplicateXrefFirstWins pins FindByXref's precedence inside Enrich:
+// an INDI and a FAM share @X@, and the INDI (listed first) must be the record
+// that event lookups resolve to.
+func TestEnrichDuplicateXrefFirstWins(t *testing.T) {
+	const ged = "0 HEAD\n1 GEDC\n2 VERS 5.5.1\n0 @X@ INDI\n1 NAME A /B/\n1 BIRT\n2 DATE 1 JAN 1900\n2 NOTE birth note from the INDI\n" +
+		"0 @X@ FAM\n1 MARR\n2 DATE 1 JAN 1920\n2 NOTE marriage note from the FAM\n0 TRLR\n"
+	doc, _, err := parser.Parse(strings.NewReader(ged))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Individuals) != 1 || len(doc.Families) != 1 {
+		t.Fatalf("setup: %d individuals, %d families", len(doc.Individuals), len(doc.Families))
+	}
+	if got := doc.FindByXref("@X@"); got != &doc.Individuals[0] {
+		t.Fatal("FindByXref should return the INDI")
+	}
+	ed := Enrich(doc)
+
+	noteFor := func(eventTag string) []string {
+		var out []string
+		for i, ev := range ed.Events {
+			if ev.EventType != eventTag {
+				continue
+			}
+			for _, l := range ed.EventNotes {
+				if l.EventIndex == i {
+					out = append(out, ed.Notes[l.NoteIndex].Content)
+				}
+			}
+		}
+		return out
+	}
+	if got := noteFor("BIRT"); len(got) != 1 || got[0] != "birth note from the INDI" {
+		t.Errorf("BIRT notes = %q, want the INDI's birth note", got)
+	}
+	hasMarr := false
+	for _, ev := range ed.Events {
+		if ev.EventType == "MARR" && ev.OwnerType == "FAM" && ev.OwnerXref == "@X@" {
+			hasMarr = true
+		}
+	}
+	if !hasMarr {
+		t.Fatal("expected a MARR event owned by the FAM @X@")
+	}
+	// The FAM's MARR owner xref resolves to the INDI, which has no family
+	// event children, so no note is linked (same as before the index).
+	if got := noteFor("MARR"); len(got) != 0 {
+		t.Errorf("MARR notes = %q, want none (xref resolves to the INDI)", got)
+	}
+}
