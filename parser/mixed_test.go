@@ -172,3 +172,58 @@ func TestDecodeReportLineFixes(t *testing.T) {
 		})
 	}
 }
+
+// 0x81 is undefined in Windows-1252. In a mixed file it is unreadable, not a
+// stray conversion: U+FFFD, ENCODING_BAD_BYTES, and no ENCODING_STRAY_BYTES.
+func TestDecodeMixedUndefinedWindows1252Byte(t *testing.T) {
+	raw := []byte("0 HEAD\n1 CHAR UTF-8\n0 @I1@ INDI\n1 NAME Renée /Dupré/\n1 NOTE a\x81b\n0 TRLR\n")
+	out, info, fs, fixes := DecodeReport(raw)
+	if !strings.Contains(string(out), "1 NOTE a�b\n") || info.Detected != "UTF-8" {
+		t.Errorf("decoded %q, info %+v", out, info)
+	}
+	if got := codes(fs); !reflect.DeepEqual(got, []string{CodeEncodingBadBytes}) {
+		t.Fatalf("codes = %v", got)
+	}
+	if f := fs[0]; f.Line != 5 || f.Details["count"] != "1" {
+		t.Errorf("finding = line %d %v", f.Line, f.Details)
+	}
+	if want := []LineFix{{Line: 5, Unreadable: 1}}; !reflect.DeepEqual(fixes, want) {
+		t.Errorf("fixes = %+v, want %+v", fixes, want)
+	}
+}
+
+// A stray byte and an undefined one in the same mixed file: each is counted
+// in its own finding and on its own line.
+func TestDecodeMixedStrayAndUndefined(t *testing.T) {
+	raw := []byte("0 HEAD\n1 CHAR UTF-8\n1 NOTE ü ö ä ë\n1 NOTE \xe9\x8d\n1 NOTE \x9d\n0 TRLR\n")
+	out, _, fs, fixes := DecodeReport(raw)
+	if !strings.Contains(string(out), "1 NOTE é�\n1 NOTE �\n") {
+		t.Errorf("decoded %q", out)
+	}
+	if f := strayFinding(t, fs); f.Line != 4 || f.Details["count"] != "1" {
+		t.Errorf("stray = line %d %v", f.Line, f.Details)
+	}
+	if f := badBytesFinding(t, fs); f.Line != 4 || f.Details["count"] != "2" {
+		t.Errorf("bad = line %d %v", f.Line, f.Details)
+	}
+	if want := []LineFix{{Line: 4, Stray: 1, Unreadable: 1}, {Line: 5, Unreadable: 1}}; !reflect.DeepEqual(fixes, want) {
+		t.Errorf("fixes = %+v, want %+v", fixes, want)
+	}
+}
+
+// The same undefined byte in a CHAR ANSI file read as Windows-1252 throughout.
+func TestDecodeANSIUndefinedByte(t *testing.T) {
+	for _, b := range []byte{0x81, 0x8D, 0x8F, 0x90, 0x9D} {
+		raw := []byte("0 HEAD\n1 CHAR ANSI\n0 @I1@ INDI\n1 NAME Ren\xe9e\n1 NOTE a" + string([]byte{b}) + "b\n0 TRLR\n")
+		out, info, fs, fixes := DecodeReport(raw)
+		if !strings.Contains(string(out), "1 NAME Renée\n1 NOTE a�b\n") || info.Detected != "Windows-1252" {
+			t.Errorf("%#x: decoded %q, info %+v", b, out, info)
+		}
+		if f := badBytesFinding(t, fs); f.Line != 5 || f.Details["count"] != "1" {
+			t.Errorf("%#x: finding = line %d %v", b, f.Line, f.Details)
+		}
+		if want := []LineFix{{Line: 5, Unreadable: 1}}; !reflect.DeepEqual(fixes, want) {
+			t.Errorf("%#x: fixes = %+v, want %+v", b, fixes, want)
+		}
+	}
+}

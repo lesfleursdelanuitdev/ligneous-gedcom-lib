@@ -72,6 +72,8 @@ func unreadableInputs() map[string][]byte {
 		"ANSEL undefined byte":     []byte("0 HEAD\r\n1 CHAR ANSEL\r\n0 @I1@ INDI\r\n1 NAME A\xFF\xFF /B/\r\n1 NOTE x\xFFy\xFF\r\n0 TRLR\r\n"),
 		"ANSEL stranded mark":      []byte("0 HEAD\r\n1 CHAR ANSEL\r\n0 @I1@ INDI\r\n1 NOTE Ren\xE2\r\n1 SEX M\r\n0 TRLR\r\n"),
 		"ANSEL mark at EOF":        []byte("0 HEAD\r\n1 CHAR ANSEL\r\n0 @I1@ INDI\r\n1 NOTE Ren\xE2"),
+		"mixed undefined byte":     []byte("0 HEAD\n1 CHAR UTF-8\n0 @I1@ INDI\n1 NAME Renée /Dupré/\n1 NOTE a\x81b\n0 TRLR\n"),
+		"ANSI undefined byte":      []byte("0 HEAD\n1 CHAR ANSI\n0 @I1@ INDI\n1 NAME Ren\xe9e\n1 NOTE a\x81b\n0 TRLR\n"),
 		"ANSEL long line with bad": []byte("0 HEAD\r\n1 CHAR ANSEL\r\n0 @I1@ INDI\r\n1 NOTE " + strings.Repeat("x", 300) + "\xFF\r\n0 TRLR\r\n"),
 	}
 }
@@ -85,6 +87,9 @@ func TestRepairUnreadableChanges(t *testing.T) {
 			{4, "replaced 2 unreadable characters with �"}, {5, "replaced 2 unreadable characters with �"}},
 		"ANSEL stranded mark": {{0, "converted from ANSEL to UTF-8"}, {2, "set the character set to UTF-8"},
 			{4, "replaced 1 unreadable characters with �"}},
+		"mixed undefined byte": {{5, "replaced 1 unreadable characters with �"}},
+		"ANSI undefined byte": {{0, "converted from Windows-1252 to UTF-8"}, {2, "set the character set to UTF-8"},
+			{5, "replaced 1 unreadable characters with �"}},
 	}
 	for name, raw := range unreadableInputs() {
 		w, ok := want[name]
@@ -145,6 +150,28 @@ func TestRepairEveryReplacementCharacterHasChange(t *testing.T) {
 				}
 				if n > 0 && !found {
 					t.Errorf("line %d has %d U+FFFD but no Change %q (changes %v)", i+1, n, what, res.Changes)
+				}
+			}
+		})
+	}
+}
+
+// An undefined Windows-1252 byte reads as U+FFFD in the repaired file, in a
+// mixed file and in a CHAR ANSI file alike, and is never called "stray".
+func TestRepairUndefinedWindows1252Byte(t *testing.T) {
+	in := unreadableInputs()
+	for _, name := range []string{"mixed undefined byte", "ANSI undefined byte"} {
+		t.Run(name, func(t *testing.T) {
+			res, err := Repair(in[name])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(res.Data), "1 NAME Renée") || !strings.Contains(string(res.Data), "1 NOTE a\uFFFDb\n") {
+				t.Errorf("Data %q", res.Data)
+			}
+			for _, c := range res.Changes {
+				if strings.Contains(c.What, "stray") {
+					t.Errorf("Change %v calls the byte stray", c)
 				}
 			}
 		})

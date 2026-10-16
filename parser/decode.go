@@ -359,28 +359,39 @@ func utf8Counts(b []byte) (multi, invalid int) {
 
 // mixed decodes b as UTF-8 and reads each byte that is not valid UTF-8 as
 // Windows-1252. It reports ENCODING_STRAY_BYTES (count = bytes converted) on
-// the first affected line.
+// the first affected line. A byte that Windows-1252 leaves undefined becomes
+// U+FFFD instead and is reported as ENCODING_BAD_BYTES.
 func (d *decoder) mixed(b []byte) []byte {
 	out := make([]byte, 0, len(b)+16)
 	for i := 0; i < len(b); {
 		r, size := utf8.DecodeRune(b[i:])
 		if r == utf8.RuneError && size == 1 {
-			d.strayAt = append(d.strayAt, len(out))
-			out = utf8.AppendRune(out, charmap.Windows1252.DecodeByte(b[i]))
+			if c := charmap.Windows1252.DecodeByte(b[i]); c != utf8.RuneError {
+				d.strayAt = append(d.strayAt, len(out))
+				out = utf8.AppendRune(out, c)
+			} else { // undefined in Windows-1252 too (0x81, 0x8D, 0x8F, 0x90, 0x9D)
+				d.fffdAt = append(d.fffdAt, len(out))
+				out = append(out, "\uFFFD"...)
+			}
 			i++
 			continue
 		}
 		out = append(out, b[i:i+size]...)
 		i += size
 	}
-	n := len(d.strayAt)
-	f := newParseError(CodeEncodingStrayBytes, lineAt(out, d.strayAt[0]),
-		fmt.Sprintf("%d byte(s) are not valid UTF-8; read as Windows-1252", n), "")
-	f.Details = map[string]string{"encoding": d.info.Detected, "count": strconv.Itoa(n)}
-	if d.info.Declared != "" {
-		f.Details["declared"] = d.info.Declared
+	if n := len(d.strayAt); n > 0 {
+		f := newParseError(CodeEncodingStrayBytes, lineAt(out, d.strayAt[0]),
+			fmt.Sprintf("%d byte(s) are not valid UTF-8; read as Windows-1252", n), "")
+		f.Details = map[string]string{"encoding": d.info.Detected, "count": strconv.Itoa(n)}
+		if d.info.Declared != "" {
+			f.Details["declared"] = d.info.Declared
+		}
+		d.findings = append(d.findings, f)
 	}
-	d.findings = append(d.findings, f)
+	if n := len(d.fffdAt); n > 0 {
+		d.badBytesFinding(lineAt(out, d.fffdAt[0]), n,
+			fmt.Sprintf("%d byte(s) are neither valid UTF-8 nor defined in Windows-1252", n))
+	}
 	return out
 }
 
@@ -454,6 +465,12 @@ func (d *decoder) legacy(raw []byte, kind charKind) ([]byte, gedcom.EncodingInfo
 	default:
 		d.info.Detected = "Windows-1252"
 		out = decodeCharmap(charmap.Windows1252, raw)
+	}
+	if kind != kindANSEL {
+		// A single byte never decodes to the three bytes of U+FFFD, so
+		// every U+FFFD is a byte the table leaves undefined.
+		d.fffdAt = fffdOffsets(out)
+		bad = len(d.fffdAt)
 	}
 	d.add(CodeEncodingNotUTF8, d.info.Detected+" is not UTF-8; it will be converted", nil)
 	d.badBytes(out, bad)
