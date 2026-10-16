@@ -321,7 +321,10 @@ func TestRepairBadBytesStayInLeft(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertChanges(t, res.Changes, []Change{{0, "removed the byte order mark"}})
+	assertChanges(t, res.Changes, []Change{
+		{0, "removed the byte order mark"},
+		{4, "replaced 1 unreadable characters with \uFFFD"},
+	})
 	assertLeftHas(t, res, "ENCODING_BAD_BYTES", true)
 	if !strings.Contains(string(res.Data), "1 NAME A� /B/\n") {
 		t.Errorf("Data = %q", res.Data)

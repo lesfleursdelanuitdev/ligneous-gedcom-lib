@@ -5,6 +5,9 @@
 // The fixes:
 //   - convert the file to UTF-8, remove any byte order mark, and make the header say
 //     "1 CHAR UTF-8", adding that line after the GEDC structure if missing;
+//     in a UTF-8 file with a few stray bytes only those bytes are converted
+//     (one Change per line), and every line where decoding wrote U+FFFD gets
+//     a Change too;
 //   - turn bare "\r" line endings into "\r\n", keeping "\n" and "\r\n" as they are;
 //   - remove blank lines;
 //   - remove spaces and tabs before the level number (only on lines that
@@ -80,6 +83,8 @@ const (
 	whatWhitespace = "removed spaces before the level number"
 	whatTrailer    = "added the end-of-file marker (0 TRLR)"
 	whatBOM        = "removed the byte order mark"
+	whatStray      = "converted %d stray Windows-1252 characters to UTF-8"
+	whatUnreadable = "replaced %d unreadable characters with \uFFFD"
 )
 
 // srcLine is one line of the decoded original.
@@ -107,7 +112,7 @@ type outLine struct {
 // Repair decodes data, applies the fixes described in the package comment
 // and returns the result. It fails only when data holds no GEDCOM line.
 func Repair(data []byte) (*Result, error) {
-	text, info, findings := parser.Decode(data)
+	text, info, _, fixes := parser.DecodeReport(data)
 	src := splitLines(text)
 	n := len(src)
 
@@ -126,6 +131,18 @@ func Repair(data []byte) (*Result, error) {
 	}
 	if hasBOM(data) {
 		changes = append(changes, Change{0, whatBOM})
+	}
+	// What decoding did to single lines: stray bytes in a UTF-8 file read as
+	// Windows-1252, and unreadable bytes written as U+FFFD.
+	unreadable := false
+	for _, f := range fixes {
+		if f.Stray > 0 {
+			changes = append(changes, Change{f.Line, fmt.Sprintf(whatStray, f.Stray)})
+		}
+		if f.Unreadable > 0 {
+			unreadable = true
+			changes = append(changes, Change{f.Line, fmt.Sprintf(whatUnreadable, f.Unreadable)})
+		}
 	}
 
 	// Clean each line from HEAD on: drop blank lines, strip leading whitespace
@@ -288,7 +305,7 @@ func Repair(data []byte) (*Result, error) {
 
 	sort.SliceStable(changes, func(a, b int) bool { return changes[a].Line < changes[b].Line })
 	res := &Result{Data: buf.Bytes(), Changes: changes}
-	res.Left = leftCodes(res.Data, findings)
+	res.Left = leftCodes(res.Data, unreadable)
 	return res, nil
 }
 
@@ -493,14 +510,14 @@ func cutPoint(v string, limit int) int {
 }
 
 // leftCodes re-checks the repaired data: a lenient parse plus validation with
-// date checks. ENCODING_BAD_BYTES is added when the original had it, since the
-// replacement characters are valid UTF-8 in the repaired file.
-func leftCodes(data []byte, original []*parser.ParseError) []string {
+// date checks. ENCODING_BAD_BYTES is added when decoding wrote U+FFFD
+// (unreadable), since the replacement characters are valid UTF-8 in the
+// repaired file. Stray bytes converted in a UTF-8 file are fixed, so they
+// leave nothing behind.
+func leftCodes(data []byte, unreadable bool) []string {
 	set := map[string]bool{}
-	for _, f := range original {
-		if f.Code == parser.CodeEncodingBadBytes {
-			set[f.Code] = true
-		}
+	if unreadable {
+		set[parser.CodeEncodingBadBytes] = true
 	}
 	opts := parser.DefaultOptions()
 	opts.Lenient = true

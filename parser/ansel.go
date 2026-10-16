@@ -33,17 +33,42 @@ var anselMark = [31]rune{
 }
 
 // decodeANSEL converts ANSEL bytes to a Unicode string in NFC form. Combining
-// marks are moved after their base letter. Undefined bytes become U+FFFD and
-// marks with no base letter are dropped; bad counts both.
+// marks are moved after their base letter. Marks at the end of a line carry
+// over to the first letter of the next line's value when that line is a CONC
+// continuation ("<level> CONC "), since CONC joins the two with nothing in
+// between. Every other mark with no usable base letter becomes U+FFFD, as does
+// every undefined byte; bad counts them, so it equals the number of U+FFFD
+// written.
 func decodeANSEL(b []byte) (s string, bad int) {
 	var sb strings.Builder
 	sb.Grow(len(b) + 8)
 	var marks []rune // pending marks, in input order
 	composed := false
-	for _, c := range b {
+	strand := func() { // pending marks with no base letter
+		for range marks {
+			sb.WriteRune(0xFFFD)
+		}
+		bad += len(marks)
+		marks = marks[:0]
+	}
+	for i := 0; i < len(b); i++ {
+		c := b[i]
 		if c >= 0xE0 && c <= 0xFE && anselMark[c-0xE0] != 0 {
 			marks = append(marks, anselMark[c-0xE0])
 			continue
+		}
+		if len(marks) > 0 && (c == '\r' || c == '\n') {
+			end := i + 1
+			if c == '\r' && end < len(b) && b[end] == '\n' {
+				end++
+			}
+			if n := concPrefix(b[end:]); n > 0 {
+				// Copy the line ending and "<level> CONC " as they are;
+				// the marks wait for the CONC value's first letter.
+				sb.Write(b[i : end+n])
+				i = end + n - 1
+				continue
+			}
 		}
 		var r rune
 		switch {
@@ -65,15 +90,38 @@ func decodeANSEL(b []byte) (s string, bad int) {
 				marks = marks[:0]
 				continue
 			}
-			bad += len(marks) // marks with no usable base letter
-			marks = marks[:0]
+			strand()
 		}
 		sb.WriteRune(r)
 	}
-	bad += len(marks)
+	strand()
 	s = sb.String()
 	if composed {
 		s = norm.NFC.String(s)
 	}
 	return s, bad
+}
+
+// concPrefix returns the length of "[ws] <level> SP+ CONC SP" at the start of
+// b, or 0 when b does not start a CONC line. The prefix is ASCII in ANSEL.
+func concPrefix(b []byte) int {
+	i := 0
+	for i < len(b) && (b[i] == ' ' || b[i] == '\t') {
+		i++
+	}
+	d := i
+	for i < len(b) && b[i] >= '0' && b[i] <= '9' {
+		i++
+	}
+	if i == d {
+		return 0
+	}
+	sp := i
+	for i < len(b) && (b[i] == ' ' || b[i] == '\t') {
+		i++
+	}
+	if i == sp || len(b) < i+5 || string(b[i:i+4]) != "CONC" || (b[i+4] != ' ' && b[i+4] != '\t') {
+		return 0
+	}
+	return i + 5
 }

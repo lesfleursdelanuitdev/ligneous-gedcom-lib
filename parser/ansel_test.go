@@ -17,8 +17,14 @@ func TestANSELCombining(t *testing.T) {
 		{"diaeresis", []byte{0xE8, 'u'}, "ü", 0},
 		{"cedilla", []byte{0xF0, 'c'}, "ç", 0},
 		{"mark inside text", []byte("Ren\xE2e!"), "René!", 0},
-		{"trailing mark dropped", []byte{'a', 0xE2}, "a", 1},
-		{"mark before newline dropped", []byte{0xE2, '\n', 'a'}, "\na", 1},
+		{"trailing mark becomes U+FFFD", []byte{'a', 0xE2}, "a\uFFFD", 1},
+		{"mark before newline becomes U+FFFD", []byte{0xE2, '\n', 'a'}, "\uFFFD\na", 1},
+		{"mark before CONC carries over", []byte("1 NOTE n\xE2\n2 CONC e"), "1 NOTE n\n2 CONC é", 0},
+		{"mark before CRLF CONC carries over", []byte("1 NOTE n\xE2\r\n  12  CONC e"), "1 NOTE n\r\n  12  CONC é", 0},
+		{"mark before CONT becomes U+FFFD", []byte("1 NOTE n\xE2\n2 CONT e"), "1 NOTE n\uFFFD\n2 CONT e", 1},
+		{"mark before CONCX becomes U+FFFD", []byte("1 NOTE n\xE2\n2 CONCX e"), "1 NOTE n\uFFFD\n2 CONCX e", 1},
+		{"mark before a control character becomes U+FFFD", []byte{0xE2, 0x1B}, "\uFFFD\x1b", 1},
+		{"two marks before an undefined byte", []byte{0xE2, 0xE3, 0xFF}, "\uFFFD\uFFFD\uFFFD", 3},
 	}
 	for _, c := range cases {
 		got, bad := decodeANSEL(c.in)

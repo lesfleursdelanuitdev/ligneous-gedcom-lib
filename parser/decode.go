@@ -102,21 +102,97 @@ func lineAt(b []byte, idx int) int {
 
 // Decode turns the raw bytes of a GEDCOM file into UTF-8. It checks, in order,
 // a byte order mark, the UTF-16 byte pattern and HEAD.CHAR, then checks the
-// choice against the bytes. It never fails: bytes that cannot be decoded become
-// U+FFFD and are reported in the findings.
+// choice against the bytes. A file meant to be UTF-8 (by its byte order mark,
+// its CHAR or no CHAR) that has a few invalid bytes is still read as UTF-8
+// when its valid multi-byte sequences outnumber the invalid bytes; each
+// invalid byte is then read as Windows-1252 (ENCODING_BAD_BYTES). Otherwise
+// such a file is read as Windows-1252 throughout (ENCODING_MISLABELED).
+// Decode never fails: bytes that cannot be decoded become U+FFFD and are
+// reported in the findings.
 func Decode(raw []byte) (utf8Bytes []byte, info gedcom.EncodingInfo, findings []*ParseError) {
+	utf8Bytes, info, findings, _ = DecodeReport(raw)
+	return utf8Bytes, info, findings
+}
+
+// LineFix says what Decode did to one line beyond converting its encoding.
+type LineFix struct {
+	Line int // 1-based line number in the file
+	// Stray is the number of bytes that were not valid UTF-8 in a file that
+	// is otherwise UTF-8, each read as Windows-1252.
+	Stray int
+	// Unreadable is the number of U+FFFD characters Decode wrote because it
+	// could not read the bytes (U+FFFD already in the file is not counted).
+	Unreadable int
+}
+
+// DecodeReport is Decode plus, in line order, every line where a stray byte
+// was converted or an unreadable character was replaced with U+FFFD.
+func DecodeReport(raw []byte) (utf8Bytes []byte, info gedcom.EncodingInfo, findings []*ParseError, fixes []LineFix) {
 	var d decoder
 	utf8Bytes, info, findings = d.run(raw)
 	for _, f := range findings { // Detected is final only now
 		f.Details["encoding"] = info.Detected
 	}
-	return utf8Bytes, info, findings
+	if len(d.strayAt) > 0 || len(d.fffdAt) > 0 {
+		fixes = lineFixes(utf8Bytes, d.strayAt, d.fffdAt)
+	}
+	return utf8Bytes, info, findings, fixes
 }
 
 type decoder struct {
 	info     gedcom.EncodingInfo
 	findings []*ParseError
 	line     int // line of the CHAR record, or 1
+	// Byte offsets in the output, in increasing order, of each character
+	// converted from a stray byte and of each U+FFFD written by the decoder.
+	strayAt, fffdAt []int
+}
+
+// lineFixes turns output offsets into per-line counts, in line order.
+func lineFixes(text []byte, strayAt, fffdAt []int) []LineFix {
+	var fixes []LineFix
+	line, i, s, f := 1, 0, 0, 0
+	add := func(stray bool) {
+		if len(fixes) == 0 || fixes[len(fixes)-1].Line != line {
+			fixes = append(fixes, LineFix{Line: line})
+		}
+		if stray {
+			fixes[len(fixes)-1].Stray++
+		} else {
+			fixes[len(fixes)-1].Unreadable++
+		}
+	}
+	for s < len(strayAt) || f < len(fffdAt) {
+		next, stray := 0, false
+		switch {
+		case f >= len(fffdAt) || (s < len(strayAt) && strayAt[s] < fffdAt[f]):
+			next, stray = strayAt[s], true
+			s++
+		default:
+			next = fffdAt[f]
+			f++
+		}
+		for ; i < next && i < len(text); i++ {
+			if text[i] == '\n' || (text[i] == '\r' && (i+1 >= len(text) || text[i+1] != '\n')) {
+				line++
+			}
+		}
+		add(stray)
+	}
+	return fixes
+}
+
+// fffdOffsets returns the offset of every U+FFFD in text.
+func fffdOffsets(text []byte) []int {
+	var at []int
+	for i := 0; ; {
+		k := bytes.Index(text[i:], []byte("\uFFFD"))
+		if k < 0 {
+			return at
+		}
+		at = append(at, i+k)
+		i += k + 3
+	}
 }
 
 func (d *decoder) add(code, msg string, extra map[string]string) {
@@ -140,16 +216,21 @@ func (d *decoder) setChar(value string, line int) charKind {
 	return classifyChar(value)
 }
 
+// badBytes reports n unreadable bytes; the finding sits on the line of the
+// first U+FFFD the decoder wrote.
 func (d *decoder) badBytes(text []byte, n int) {
 	if n == 0 {
 		return
 	}
-	i := bytes.Index(text, []byte("�"))
 	line := 1
-	if i >= 0 {
-		line = lineAt(text, i)
+	if len(d.fffdAt) > 0 {
+		line = lineAt(text, d.fffdAt[0])
 	}
-	f := newParseError(CodeEncodingBadBytes, line, fmt.Sprintf("%d byte(s) could not be decoded as %s", n, d.info.Detected), "")
+	d.badBytesFinding(line, n, fmt.Sprintf("%d byte(s) could not be decoded as %s", n, d.info.Detected))
+}
+
+func (d *decoder) badBytesFinding(line, n int, msg string) {
+	f := newParseError(CodeEncodingBadBytes, line, msg, "")
 	f.Details = map[string]string{"encoding": d.info.Detected, "count": strconv.Itoa(n)}
 	if d.info.Declared != "" {
 		f.Details["declared"] = d.info.Declared
@@ -198,6 +279,11 @@ func (d *decoder) run(raw []byte) ([]byte, gedcom.EncodingInfo, []*ParseError) {
 		}
 		return raw, d.info, d.findings
 	}
+	if multi, invalid := utf8Counts(raw); multi > invalid {
+		// Mostly UTF-8 with a few stray bytes: keep the UTF-8.
+		d.info.Detected = "UTF-8"
+		return d.mixed(raw), d.info, d.findings
+	}
 	// Not UTF-8 although declared (or assumed) to be.
 	d.info.Detected, d.info.Reason = "Windows-1252", "bytes are not valid UTF-8"
 	d.add(CodeEncodingMislabeled, "the bytes are not valid UTF-8; read as Windows-1252", nil)
@@ -226,12 +312,18 @@ func (d *decoder) bomUTF8(body []byte) ([]byte, gedcom.EncodingInfo, []*ParseErr
 	if utf8.Valid(body) {
 		return body, d.info, d.findings
 	}
-	out := bytes.ToValidUTF8(body, []byte("�"))
-	n, i := 0, 0
-	for i < len(body) {
+	if multi, invalid := utf8Counts(body); multi > invalid {
+		return d.mixed(body), d.info, d.findings
+	}
+	// Each run of invalid bytes becomes one U+FFFD.
+	out := make([]byte, 0, len(body)+8)
+	n := 0
+	for i := 0; i < len(body); {
 		r, size := utf8.DecodeRune(body[i:])
 		if r == utf8.RuneError && size == 1 {
 			n++
+			d.fffdAt = append(d.fffdAt, len(out))
+			out = append(out, "\uFFFD"...)
 			for i += size; i < len(body); i += size {
 				if r, size = utf8.DecodeRune(body[i:]); !(r == utf8.RuneError && size == 1) {
 					break
@@ -239,10 +331,52 @@ func (d *decoder) bomUTF8(body []byte) ([]byte, gedcom.EncodingInfo, []*ParseErr
 			}
 			continue
 		}
+		out = append(out, body[i:i+size]...)
 		i += size
 	}
 	d.badBytes(out, n)
 	return out, d.info, d.findings
+}
+
+// utf8Counts returns the number of valid multi-byte UTF-8 sequences in b and
+// the number of bytes that are not valid UTF-8.
+func utf8Counts(b []byte) (multi, invalid int) {
+	for i := 0; i < len(b); {
+		if b[i] < utf8.RuneSelf {
+			i++
+			continue
+		}
+		r, size := utf8.DecodeRune(b[i:])
+		if r == utf8.RuneError && size == 1 {
+			invalid++
+		} else {
+			multi++
+		}
+		i += size
+	}
+	return multi, invalid
+}
+
+// mixed decodes b as UTF-8 and reads each byte that is not valid UTF-8 as
+// Windows-1252. It reports ENCODING_BAD_BYTES (count = bytes converted) on
+// the first affected line.
+func (d *decoder) mixed(b []byte) []byte {
+	out := make([]byte, 0, len(b)+16)
+	for i := 0; i < len(b); {
+		r, size := utf8.DecodeRune(b[i:])
+		if r == utf8.RuneError && size == 1 {
+			d.strayAt = append(d.strayAt, len(out))
+			out = utf8.AppendRune(out, charmap.Windows1252.DecodeByte(b[i]))
+			i++
+			continue
+		}
+		out = append(out, b[i:i+size]...)
+		i += size
+	}
+	n := len(d.strayAt)
+	d.badBytesFinding(lineAt(out, d.strayAt[0]), n,
+		fmt.Sprintf("%d byte(s) are not valid UTF-8; read as Windows-1252", n))
+	return out
 }
 
 func (d *decoder) utf16(b []byte, be bool, reason string) ([]byte, gedcom.EncodingInfo, []*ParseError) {
@@ -250,19 +384,36 @@ func (d *decoder) utf16(b []byte, be bool, reason string) ([]byte, gedcom.Encodi
 	if be {
 		d.info.Detected = "UTF-16BE"
 	}
-	u := make([]uint16, len(b)/2)
-	for i := range u {
+	unit := func(i int) rune {
 		if be {
-			u[i] = uint16(b[2*i])<<8 | uint16(b[2*i+1])
-		} else {
-			u[i] = uint16(b[2*i+1])<<8 | uint16(b[2*i])
+			return rune(b[2*i])<<8 | rune(b[2*i+1])
 		}
+		return rune(b[2*i+1])<<8 | rune(b[2*i])
 	}
-	out := []byte(string(utf16.Decode(u)))
-	bad := bytes.Count(out, []byte("�"))
+	n := len(b) / 2
+	out := make([]byte, 0, n+n/2)
+	bad := 0
+	for i := 0; i < n; i++ {
+		r := unit(i)
+		if utf16.IsSurrogate(r) {
+			if i+1 < n {
+				if p := utf16.DecodeRune(r, unit(i+1)); p != utf8.RuneError {
+					out = utf8.AppendRune(out, p)
+					i++
+					continue
+				}
+			}
+			// A lone surrogate.
+			bad++
+			d.fffdAt = append(d.fffdAt, len(out))
+			r = utf8.RuneError
+		}
+		out = utf8.AppendRune(out, r)
+	}
 	if len(b)%2 == 1 {
-		out = append(out, "�"...)
 		bad++
+		d.fffdAt = append(d.fffdAt, len(out))
+		out = append(out, "\uFFFD"...)
 	}
 	kind := d.setChar(scanChar(out))
 	d.add(CodeEncodingNotUTF8, d.info.Detected+" is not UTF-8; it will be converted", nil)
@@ -286,6 +437,9 @@ func (d *decoder) legacy(raw []byte, kind charKind) ([]byte, gedcom.EncodingInfo
 		var s string
 		s, bad = decodeANSEL(raw)
 		out = []byte(s)
+		if bad > 0 { // ANSEL has no U+FFFD of its own: every one is ours
+			d.fffdAt = fffdOffsets(out)
+		}
 	case kindCP437:
 		d.info.Detected = "CP437"
 		out = decodeCharmap(charmap.CodePage437, raw)
