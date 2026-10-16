@@ -2,6 +2,7 @@ package parser
 
 import (
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -225,5 +226,46 @@ func TestDecodeANSIUndefinedByte(t *testing.T) {
 		if want := []LineFix{{Line: 5, Unreadable: 1}}; !reflect.DeepEqual(fixes, want) {
 			t.Errorf("%#x: fixes = %+v, want %+v", b, fixes, want)
 		}
+	}
+}
+
+// An ANSEL mark at the end of a line carries over only to a real CONC
+// continuation of that line: CONC one level deeper, or CONC at the same
+// level when the line is itself CONC or CONT. Otherwise it is stranded.
+func TestDecodeANSELMarkConcLevel(t *testing.T) {
+	const head = "0 HEAD\r\n1 CHAR ANSEL\r\n0 @I1@ INDI\r\n"
+	cases := []struct {
+		name, in, want string
+		bad            int // U+FFFD written, on line 4
+	}{
+		{"sibling CONC strands", "1 NOTE Ren\xE2\r\n1 CONC e\r\n", "1 NOTE Ren�\r\n1 CONC e\r\n", 1},
+		{"CONC two levels down strands", "1 NOTE Ren\xE2\r\n2 SOUR x\r\n3 CONC e\r\n", "1 NOTE Ren�\r\n2 SOUR x\r\n3 CONC e\r\n", 1},
+		{"CONC three levels after NOTE strands", "1 NOTE Ren\xE2\r\n3 CONC e\r\n", "1 NOTE Ren�\r\n3 CONC e\r\n", 1},
+		{"CONC one level down carries", "1 NOTE Ren\xE2\r\n2 CONC e\r\n", "1 NOTE Ren\r\n2 CONC é\r\n", 0},
+		{"CONC after CONC carries", "1 NOTE x\r\n2 CONC Ren\xE2\r\n2 CONC e\r\n", "1 NOTE x\r\n2 CONC Ren\r\n2 CONC é\r\n", 0},
+		{"CONC after CONT carries", "1 NOTE x\r\n2 CONT Ren\xE2\r\n2 CONC e\r\n", "1 NOTE x\r\n2 CONT Ren\r\n2 CONC é\r\n", 0},
+		{"CONC one level below a CONC carries", "1 NOTE x\r\n2 CONC Ren\xE2\r\n3 CONC e\r\n", "1 NOTE x\r\n2 CONC Ren\r\n3 CONC é\r\n", 0},
+		{"CONC two levels below a CONC strands", "1 NOTE x\r\n2 CONC Ren\xE2\r\n4 CONC e\r\n", "1 NOTE x\r\n2 CONC Ren�\r\n4 CONC e\r\n", 1},
+		{"record with xref carries", "0 @N1@ NOTE Ren\xE2\r\n1 CONC e\r\n", "0 @N1@ NOTE Ren\r\n1 CONC é\r\n", 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			out, _, fs := Decode([]byte(head + c.in + "0 TRLR\r\n"))
+			if want := head + c.want + "0 TRLR\r\n"; string(out) != want {
+				t.Errorf("decoded:\n%q\nwant\n%q", out, want)
+			}
+			var bad *ParseError
+			for _, f := range fs {
+				if f.Code == CodeEncodingBadBytes {
+					bad = f
+				}
+			}
+			switch {
+			case c.bad == 0 && bad != nil:
+				t.Errorf("unexpected %v", bad.Details)
+			case c.bad > 0 && (bad == nil || bad.Line < 4 || bad.Details["count"] != strconv.Itoa(c.bad)):
+				t.Errorf("want ENCODING_BAD_BYTES count %d, got %+v", c.bad, bad)
+			}
+		})
 	}
 }

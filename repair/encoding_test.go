@@ -67,14 +67,16 @@ func unreadableInputs() map[string][]byte {
 	surrogate = append(surrogate, 0x00, 0xDC) // lone low surrogate
 	surrogate = append(surrogate, utf16LE("b\r\n0 TRLR\r\n")...)
 	return map[string][]byte{
-		"BOM and stray byte":       []byte("\xEF\xBB\xBF0 HEAD\n1 CHAR UTF-8\n0 @I1@ INDI\n1 NAME A\xFF /B/\n0 TRLR\n"),
-		"UTF-16 lone surrogate":    surrogate,
-		"ANSEL undefined byte":     []byte("0 HEAD\r\n1 CHAR ANSEL\r\n0 @I1@ INDI\r\n1 NAME A\xFF\xFF /B/\r\n1 NOTE x\xFFy\xFF\r\n0 TRLR\r\n"),
-		"ANSEL stranded mark":      []byte("0 HEAD\r\n1 CHAR ANSEL\r\n0 @I1@ INDI\r\n1 NOTE Ren\xE2\r\n1 SEX M\r\n0 TRLR\r\n"),
-		"ANSEL mark at EOF":        []byte("0 HEAD\r\n1 CHAR ANSEL\r\n0 @I1@ INDI\r\n1 NOTE Ren\xE2"),
-		"mixed undefined byte":     []byte("0 HEAD\n1 CHAR UTF-8\n0 @I1@ INDI\n1 NAME Renée /Dupré/\n1 NOTE a\x81b\n0 TRLR\n"),
-		"ANSI undefined byte":      []byte("0 HEAD\n1 CHAR ANSI\n0 @I1@ INDI\n1 NAME Ren\xe9e\n1 NOTE a\x81b\n0 TRLR\n"),
-		"ANSEL long line with bad": []byte("0 HEAD\r\n1 CHAR ANSEL\r\n0 @I1@ INDI\r\n1 NOTE " + strings.Repeat("x", 300) + "\xFF\r\n0 TRLR\r\n"),
+		"BOM and stray byte":             []byte("\xEF\xBB\xBF0 HEAD\n1 CHAR UTF-8\n0 @I1@ INDI\n1 NAME A\xFF /B/\n0 TRLR\n"),
+		"UTF-16 lone surrogate":          surrogate,
+		"ANSEL undefined byte":           []byte("0 HEAD\r\n1 CHAR ANSEL\r\n0 @I1@ INDI\r\n1 NAME A\xFF\xFF /B/\r\n1 NOTE x\xFFy\xFF\r\n0 TRLR\r\n"),
+		"ANSEL stranded mark":            []byte("0 HEAD\r\n1 CHAR ANSEL\r\n0 @I1@ INDI\r\n1 NOTE Ren\xE2\r\n1 SEX M\r\n0 TRLR\r\n"),
+		"ANSEL mark before sibling CONC": []byte("0 HEAD\r\n1 CHAR ANSEL\r\n0 @I1@ INDI\r\n1 NOTE Ren\xE2\r\n1 CONC e\r\n0 TRLR\r\n"),
+		"ANSEL mark before deep CONC":    []byte("0 HEAD\r\n1 CHAR ANSEL\r\n0 @I1@ INDI\r\n1 NOTE Ren\xE2\r\n3 CONC e\r\n0 TRLR\r\n"),
+		"ANSEL mark at EOF":              []byte("0 HEAD\r\n1 CHAR ANSEL\r\n0 @I1@ INDI\r\n1 NOTE Ren\xE2"),
+		"mixed undefined byte":           []byte("0 HEAD\n1 CHAR UTF-8\n0 @I1@ INDI\n1 NAME Renée /Dupré/\n1 NOTE a\x81b\n0 TRLR\n"),
+		"ANSI undefined byte":            []byte("0 HEAD\n1 CHAR ANSI\n0 @I1@ INDI\n1 NAME Ren\xe9e\n1 NOTE a\x81b\n0 TRLR\n"),
+		"ANSEL long line with bad":       []byte("0 HEAD\r\n1 CHAR ANSEL\r\n0 @I1@ INDI\r\n1 NOTE " + strings.Repeat("x", 300) + "\xFF\r\n0 TRLR\r\n"),
 	}
 }
 
@@ -86,6 +88,10 @@ func TestRepairUnreadableChanges(t *testing.T) {
 		"ANSEL undefined byte": {{0, "converted from ANSEL to UTF-8"}, {2, "set the character set to UTF-8"},
 			{4, "replaced 2 unreadable characters with �"}, {5, "replaced 2 unreadable characters with �"}},
 		"ANSEL stranded mark": {{0, "converted from ANSEL to UTF-8"}, {2, "set the character set to UTF-8"},
+			{4, "replaced 1 unreadable characters with �"}},
+		"ANSEL mark before sibling CONC": {{0, "converted from ANSEL to UTF-8"}, {2, "set the character set to UTF-8"},
+			{4, "replaced 1 unreadable characters with �"}},
+		"ANSEL mark before deep CONC": {{0, "converted from ANSEL to UTF-8"}, {2, "set the character set to UTF-8"},
 			{4, "replaced 1 unreadable characters with �"}},
 		"mixed undefined byte": {{5, "replaced 1 unreadable characters with �"}},
 		"ANSI undefined byte": {{0, "converted from Windows-1252 to UTF-8"}, {2, "set the character set to UTF-8"},
