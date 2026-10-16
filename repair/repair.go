@@ -3,7 +3,7 @@
 // parsed tree, so unknown tags and records survive untouched.
 //
 // The fixes:
-//   - convert the file to UTF-8 (no byte order mark) and make the header say
+//   - convert the file to UTF-8, remove any byte order mark, and make the header say
 //     "1 CHAR UTF-8", adding that line after the GEDC structure if missing;
 //   - turn bare "\r" line endings into "\r\n", keeping "\n" and "\r\n" as they are;
 //   - remove blank lines;
@@ -25,6 +25,10 @@
 //   - a CONT line of such a note, when it has no children, no CONT line
 //     follows it and no CONC line precedes it;
 //   - a CONC line of such a note, when it has no children.
+//
+// In every case the continuation level must stay within the parser's default
+// MaxNestingDepth (100), and no cut sits next to a Unicode space. The message
+// "split a N-character line" counts characters (runes); the 255 limit is bytes.
 //
 // TEXT, PAGE, TITL, PUBL, AUTH and ABBR are not split: the enricher reads only
 // their first line, so a split would cut the text short. Their LINE_TOO_LONG
@@ -74,6 +78,7 @@ const (
 	whatBlank      = "removed a blank line"
 	whatWhitespace = "removed spaces before the level number"
 	whatTrailer    = "added the end-of-file marker (0 TRLR)"
+	whatBOM        = "removed the byte order mark"
 )
 
 // srcLine is one line of the decoded original.
@@ -117,6 +122,9 @@ func Repair(data []byte) (*Result, error) {
 	changes := []Change{}
 	if info.Detected != "UTF-8" && info.Detected != "ASCII" {
 		changes = append(changes, Change{0, "converted from " + info.Detected + " to UTF-8"})
+	}
+	if hasBOM(data) {
+		changes = append(changes, Change{0, whatBOM})
 	}
 
 	// Clean each line from HEAD on: drop blank lines, strip leading whitespace.
@@ -200,6 +208,9 @@ func Repair(data []byte) (*Result, error) {
 		if nd.tag == "CONT" || nd.tag == "CONC" {
 			contLevel = nd.level
 		}
+		if contLevel > maxDepth {
+			continue // the parser would drop the CONC lines
+		}
 		contPrefix := strconv.Itoa(contLevel) + " CONC "
 		prefix := clean[i][:nd.valueStart]
 		parts := splitValue(clean[i][nd.valueStart:], maxLine-len(prefix), maxLine-len(contPrefix))
@@ -212,7 +223,7 @@ func Repair(data []byte) (*Result, error) {
 		}
 		splits[i] = lines
 		changes = append(changes, Change{i + 1,
-			fmt.Sprintf("split a %d-character line into %d lines", len(src[i].text), len(lines))})
+			fmt.Sprintf("split a %d-character line into %d lines", utf8.RuneCountInString(src[i].text), len(lines))})
 	}
 
 	hasTrailer := false
@@ -273,6 +284,13 @@ func Repair(data []byte) (*Result, error) {
 	res := &Result{Data: buf.Bytes(), Changes: changes}
 	res.Left = leftCodes(res.Data, findings)
 	return res, nil
+}
+
+// hasBOM reports whether data starts with a UTF-8 or UTF-16 byte order mark,
+// which parser.Decode strips.
+func hasBOM(data []byte) bool {
+	return bytes.HasPrefix(data, []byte{0xEF, 0xBB, 0xBF}) ||
+		bytes.HasPrefix(data, []byte{0xFF, 0xFE}) || bytes.HasPrefix(data, []byte{0xFE, 0xFF})
 }
 
 func isHead(s string) bool {
@@ -436,7 +454,9 @@ func noteSplittable(nodes []node, clean []string, i int) bool {
 
 // splitValue cuts v into a first piece of at most first bytes and further
 // pieces of at most rest bytes. Each cut falls on a rune boundary with no
-// space or tab on either side. It returns nil when no such cut exists.
+// Unicode space (unicode.IsSpace: also U+00A0, U+3000) on either side, since
+// the enricher trims the first piece of an inline note. It returns nil when
+// no such cut exists.
 func splitValue(v string, first, rest int) []string {
 	var parts []string
 	limit := first
@@ -454,7 +474,12 @@ func splitValue(v string, first, rest int) []string {
 
 func cutPoint(v string, limit int) int {
 	for c := limit; c > 0; c-- {
-		if utf8.RuneStart(v[c]) && !isSep(v[c-1]) && !isSep(v[c]) {
+		if !utf8.RuneStart(v[c]) {
+			continue
+		}
+		before, _ := utf8.DecodeLastRuneInString(v[:c])
+		at, _ := utf8.DecodeRuneInString(v[c:])
+		if !unicode.IsSpace(before) && !unicode.IsSpace(at) {
 			return c
 		}
 	}

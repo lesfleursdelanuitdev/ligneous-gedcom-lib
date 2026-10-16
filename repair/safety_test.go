@@ -3,11 +3,13 @@ package repair
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/lesfleursdelanuitdev/ligneous-gedcom-lib/enricher"
 	"github.com/lesfleursdelanuitdev/ligneous-gedcom-lib/parser"
@@ -129,28 +131,104 @@ func TestRepairIsIdempotent(t *testing.T) {
 	}
 }
 
+// TestRepairKeepsUnchangedLines walks the original and the repaired lines in
+// lockstep. Each original line maps to its output: identical when untouched,
+// without leading whitespace, absent when blank, its pieces when split, or
+// "1 CHAR UTF-8" when rewritten. The only inserted lines are CHAR and TRLR.
 func TestRepairKeepsUnchangedLines(t *testing.T) {
 	for _, path := range sampleFiles(t) {
 		t.Run(filepath.Base(path), func(t *testing.T) {
 			raw, res := readAndRepair(t, path)
 			decoded, _, _ := parser.Decode(raw)
-			touched := map[int]bool{}
-			for _, c := range res.Changes {
-				touched[c.Line] = true
-			}
+			orig := lines(decoded)
 			out := texts(lines(res.Data))
+			whats := map[int][]string{}
+			for _, c := range res.Changes {
+				whats[c.Line] = append(whats[c.Line], c.What)
+			}
+			has := func(line int, prefix string) (string, bool) {
+				for _, w := range whats[line] {
+					if strings.HasPrefix(w, prefix) {
+						return w, true
+					}
+				}
+				return "", false
+			}
+			want := 0
+			charInsert := false
 			j := 0
-			for i, l := range lines(decoded) {
-				if touched[i+1] {
-					continue
-				}
-				for j < len(out) && out[j] != l.text {
-					j++
-				}
-				if j == len(out) {
-					t.Fatalf("original line %d %q is missing or out of order", i+1, l.text)
+			next := func() string {
+				if j >= len(out) {
+					t.Fatalf("output ended early")
 				}
 				j++
+				return out[j-1]
+			}
+			for i, l := range orig {
+				n := i + 1
+				if _, ok := has(n, "removed a blank line"); ok {
+					continue
+				}
+				text := l.text
+				if _, ok := has(n, "removed spaces"); ok {
+					text = strings.TrimLeft(text, " \t")
+				}
+				if charInsert && j < len(out) && out[j] == "1 CHAR UTF-8" && text != out[j] {
+					j++ // the inserted CHAR line
+					want++
+					charInsert = false
+				}
+				switch w, split := has(n, "split a "); {
+				case split:
+					var chars, k int
+					if _, err := fmt.Sscanf(w, "split a %d-character line into %d lines", &chars, &k); err != nil {
+						t.Fatal(err)
+					}
+					if chars != utf8.RuneCountInString(l.text) {
+						t.Errorf("line %d: %q, but the line has %d characters", n, w, utf8.RuneCountInString(l.text))
+					}
+					joined := next()
+					for p := 1; p < k; p++ {
+						piece := next()
+						at := strings.Index(piece, " CONC ")
+						if at < 0 {
+							t.Fatalf("line %d piece %d is not CONC: %q", n, p+1, piece)
+						}
+						joined += piece[at+len(" CONC "):]
+					}
+					if joined != text {
+						t.Errorf("line %d: pieces do not join back", n)
+					}
+					want += k
+				default:
+					_, setChar := has(n, "set the character set")
+					if setChar && strings.Contains(text, "CHAR") && !strings.Contains(text, "HEAD") {
+						text = "1 CHAR UTF-8"
+					} else if setChar {
+						charInsert = true
+					}
+					if got := next(); got != text {
+						t.Fatalf("original line %d %q became %q", n, l.text, got)
+					}
+					want++
+				}
+			}
+			if charInsert && j < len(out) && out[j] == "1 CHAR UTF-8" {
+				j++
+				want++
+				charInsert = false
+			}
+			if charInsert {
+				t.Error("CHAR insertion reported but not found")
+			}
+			if _, ok := has(len(orig)+1, "added the end-of-file marker"); ok {
+				if next() != "0 TRLR" {
+					t.Error("TRLR not added at the end")
+				}
+				want++
+			}
+			if j != len(out) || len(out) != want {
+				t.Errorf("output has %d lines, want %d (matched %d)", len(out), want, j)
 			}
 		})
 	}

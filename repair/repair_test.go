@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -177,9 +178,9 @@ func TestRepairCustomTags(t *testing.T) {
 func TestRepairLongNote(t *testing.T) {
 	res, raw := repairFixture(t, "repair/long-note.ged")
 	assertChanges(t, res.Changes, []Change{
-		{8, "split a 300-character line into 2 lines"},
-		{9, "split a 600-character line into 3 lines"},
-		{11, "split a 280-character line into 2 lines"},
+		{8, "split a 298-character line into 2 lines"},
+		{9, "split a 599-character line into 3 lines"},
+		{11, "split a 279-character line into 2 lines"},
 		{12, "split a 300-character line into 2 lines"},
 	})
 	assertFormat(t, res.Data)
@@ -234,6 +235,12 @@ func TestRepairLongNote(t *testing.T) {
 	if v := join(9, 12, "0 @N1@ NOTE "); v != orig[8].text[len("0 @N1@ NOTE "):] {
 		t.Error("N1 pieces do not join back")
 	}
+	if v := join(13, 15, "1 CONT "); v != orig[10].text[len("1 CONT "):] {
+		t.Error("CONT pieces do not join back")
+	}
+	if v := join(15, 17, "1 CONC "); v != orig[11].text[len("1 CONC "):] {
+		t.Error("CONC pieces do not join back")
+	}
 }
 
 // Long lines that are not split: their tag's continuation is not joined back
@@ -259,13 +266,17 @@ func TestRepairEncodings(t *testing.T) {
 			{4, "set the character set to UTF-8"},
 		},
 		"encodings/mislabeled-utf8-as-ansel.ged": {{4, "set the character set to UTF-8"}},
-		"encodings/bom-utf8-char-ansel.ged":      {{4, "set the character set to UTF-8"}},
+		"encodings/bom-utf8-char-ansel.ged": {
+			{0, "removed the byte order mark"},
+			{4, "set the character set to UTF-8"},
+		},
 		"encodings/undeclared-latin1.ged": {
 			{0, "converted from Windows-1252 to UTF-8"},
 			{1, "set the character set to UTF-8"},
 		},
 		"encodings/utf16le-bom.ged": {
 			{0, "converted from UTF-16LE to UTF-8"},
+			{0, "removed the byte order mark"},
 			{4, "set the character set to UTF-8"},
 		},
 		"encodings/utf16be-nobom.ged": {
@@ -308,7 +319,7 @@ func TestRepairBadBytesStayInLeft(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertChanges(t, res.Changes, nil)
+	assertChanges(t, res.Changes, []Change{{0, "removed the byte order mark"}})
 	assertLeftHas(t, res, "ENCODING_BAD_BYTES", true)
 	if !strings.Contains(string(res.Data), "1 NAME A� /B/\n") {
 		t.Errorf("Data = %q", res.Data)
@@ -343,4 +354,81 @@ func TestRepairEmpty(t *testing.T) {
 	if _, err := Repair([]byte("\n \n")); err == nil {
 		t.Error("Repair of blank lines should fail")
 	}
+}
+
+func TestRepairRemovesUTF8BOM(t *testing.T) {
+	in := "\xEF\xBB\xBF0 HEAD\n1 CHAR UTF-8\n0 TRLR\n"
+	res, err := Repair([]byte(in))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertChanges(t, res.Changes, []Change{{0, "removed the byte order mark"}})
+	if string(res.Data) != in[3:] {
+		t.Errorf("Data = %q", res.Data)
+	}
+}
+
+// Empty Changes must mean the bytes did not change.
+func TestRepairNoChangesMeansSameBytes(t *testing.T) {
+	for _, path := range sampleFiles(t) {
+		raw, res := readAndRepair(t, path)
+		if len(res.Changes) == 0 && !bytes.Equal(res.Data, raw) {
+			t.Errorf("%s: no changes but different bytes", path)
+		}
+	}
+}
+
+// A cut next to a Unicode space (U+00A0, U+3000) would let the enricher trim
+// that space off the first piece of an inline note.
+func TestRepairNoCutAtUnicodeSpace(t *testing.T) {
+	for _, name := range []string{"repair/unicode-space.ged", "repair/unicode-space-1252.ged"} {
+		t.Run(name, func(t *testing.T) {
+			res, raw := repairFixture(t, name)
+			if a, b := enrichedJSON(t, raw), enrichedJSON(t, res.Data); a != b {
+				t.Errorf("enriched content changed\n%s", firstDiff(a, b))
+			}
+			for _, l := range lines(res.Data) {
+				if len(l.text) > 255 {
+					t.Errorf("line of %d bytes left", len(l.text))
+				}
+				first, _ := utf8.DecodeRuneInString(strings.TrimPrefix(l.text, "2 CONC "))
+				last, _ := utf8.DecodeLastRuneInString(l.text)
+				if strings.HasPrefix(l.text, "2 CONC ") && unicode.IsSpace(first) || unicode.IsSpace(last) {
+					t.Errorf("cut next to a space: %q", l.text)
+				}
+			}
+		})
+	}
+	res, _ := repairFixture(t, "repair/unicode-space.ged")
+	assertChanges(t, res.Changes, []Change{
+		{8, "split a 354-character line into 2 lines"},
+		{9, "split a 353-character line into 2 lines"},
+	})
+	got := texts(lines(res.Data))
+	r := strings.Repeat
+	if got[7] != "1 NOTE "+r("x", 245) || got[8] != "2 CONC x\u00a0"+r("y", 100) ||
+		got[9] != "1 NOTE "+r("x", 244) || got[10] != "2 CONC x\u3000"+r("y", 100) {
+		t.Errorf("lines = %q", got[7:11])
+	}
+	res, _ = repairFixture(t, "repair/unicode-space-1252.ged")
+	assertChanges(t, res.Changes, []Change{
+		{0, "converted from Windows-1252 to UTF-8"},
+		{5, "set the character set to UTF-8"},
+		{8, "split a 354-character line into 2 lines"},
+	})
+}
+
+// A NOTE at level 100 is not split: its CONC would be at level 101, past the
+// parser's MaxNestingDepth, and would be dropped.
+func TestRepairNoSplitPastMaxDepth(t *testing.T) {
+	in := "0 HEAD\n1 CHAR UTF-8\n0 @I1@ INDI\n100 NOTE " + strings.Repeat("z", 270) + "\n0 TRLR\n"
+	res, err := Repair([]byte(in))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertChanges(t, res.Changes, nil)
+	if string(res.Data) != in {
+		t.Error("data changed")
+	}
+	assertLeftHas(t, res, "LINE_TOO_LONG", true)
 }
