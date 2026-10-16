@@ -12,6 +12,10 @@ type Options struct {
 
 	// MaxNestingDepth limits hierarchical depth (default: 100).
 	MaxNestingDepth int
+
+	// Lenient turns line-level errors (BAD_LINE, BAD_LEVEL, XREF_WITHOUT_TAG,
+	// TOO_DEEP) into findings and skips the line instead of failing the parse.
+	Lenient bool
 }
 
 // DefaultOptions returns sensible default parsing options.

@@ -38,6 +38,10 @@ const (
 	CodeTooDeep           = "TOO_DEEP"
 	CodeReadError         = "READ_ERROR"
 
+	CodeLinesBeforeHead = "LINES_BEFORE_HEAD"
+	CodeLevelJump       = "LEVEL_JUMP"
+	CodeUnknownRecord   = "UNKNOWN_RECORD"
+
 	CodeEncodingNotUTF8    = "ENCODING_NOT_UTF8"
 	CodeEncodingMislabeled = "ENCODING_MISLABELED"
 	CodeEncodingUndeclared = "ENCODING_UNDECLARED"
@@ -53,6 +57,10 @@ var codeSeverity = map[string]string{
 	CodeXrefWithoutTag:    "error",
 	CodeTooDeep:           "error",
 	CodeReadError:         "error",
+
+	CodeLinesBeforeHead: "warning",
+	CodeLevelJump:       "warning",
+	CodeUnknownRecord:   "hint",
 
 	CodeEncodingNotUTF8:    "hint",
 	CodeEncodingMislabeled: "warning",

@@ -1,0 +1,11 @@
+junk before the header
+more junk
+0 HEAD
+1 CHAR UTF-8
+0 @I1@ INDI
+1 NAME A /B/
+1 BIRT
+3 DATE 1900
+0 @X1@ _EVDEF
+1 NAME custom
+0 TRLR

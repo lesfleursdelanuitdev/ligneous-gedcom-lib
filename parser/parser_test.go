@@ -424,3 +424,89 @@ func TestLongLineOver64KB(t *testing.T) {
 		t.Errorf("warnings = %+v", warnings)
 	}
 }
+
+func findCode(ws []*ParseError, code string) []*ParseError {
+	var out []*ParseError
+	for _, w := range ws {
+		if w.Code == code {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+func TestLinesBeforeHead(t *testing.T) {
+	input := "junk one\n\x00junk two\n0 HEAD\n1 CHAR UTF-8\n0 @I1@ INDI\n0 TRLR\n"
+	doc, ws, err := Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := findCode(ws, CodeLinesBeforeHead)
+	if len(f) != 1 || f[0].Line != 1 || f[0].Details["count"] != "2" || f[0].Severity != "warning" {
+		t.Fatalf("bad finding: %+v", f)
+	}
+	if len(findCode(ws, CodeBadLine)) != 0 {
+		t.Error("junk was tokenised")
+	}
+	if doc.Header.Tag != "HEAD" || len(doc.Individuals) != 1 {
+		t.Error("tree changed")
+	}
+}
+
+func TestNoHeadSkipsNothing(t *testing.T) {
+	_, ws, err := Parse(strings.NewReader("0 @I1@ INDI\n0 TRLR\n"))
+	if err != nil || len(findCode(ws, CodeLinesBeforeHead)) != 0 {
+		t.Errorf("err=%v ws=%v", err, ws)
+	}
+}
+
+func TestLevelJump(t *testing.T) {
+	input := "0 HEAD\n0 @I1@ INDI\n1 BIRT\n3 DATE 1900\n0 TRLR\n"
+	doc, ws, err := Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := findCode(ws, CodeLevelJump)
+	if len(f) != 1 || f[0].Line != 4 || f[0].Details["from"] != "1" || f[0].Details["to"] != "3" || f[0].Severity != "warning" {
+		t.Fatalf("bad finding: %+v", f)
+	}
+	if doc.Individuals[0].Children[0].ChildValue("DATE") != "1900" {
+		t.Error("DATE not under BIRT")
+	}
+}
+
+func TestUnknownTopLevelRecord(t *testing.T) {
+	input := "0 HEAD\n0 @X1@ _EVDEF\n1 NAME a\n1 TYPE b\n0 TRLR\n"
+	doc, ws, err := Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := findCode(ws, CodeUnknownRecord)
+	if len(f) != 1 || f[0].Line != 2 || f[0].Details["tag"] != "_EVDEF" || f[0].Severity != "hint" {
+		t.Fatalf("bad finding: %+v", f)
+	}
+	if len(doc.Individuals)+len(doc.Families)+len(doc.Sources)+len(doc.Notes)+len(doc.Submitters) != 0 {
+		t.Error("record landed in a slice")
+	}
+}
+
+func TestLenientSkipsBadLines(t *testing.T) {
+	input := "0 HEAD\n1 CHAR UTF-8\n0 @I1@ INDI\n1 NAME A\nABC NAME x\n0 @I2@ INDI\n1 NAME B\n1 SEX M\n1\n0 @I3@ INDI\n0 TRLR\n"
+	doc, ws, err := ParseWithOptions(strings.NewReader(input), &Options{Lenient: true, MaxNestingDepth: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bl := findCode(ws, CodeBadLevel)
+	bd := findCode(ws, CodeBadLine)
+	if len(bl) != 1 || bl[0].Line != 5 || bl[0].Severity != "error" || len(bd) != 1 || bd[0].Line != 9 || bd[0].Severity != "error" {
+		t.Fatalf("bad findings: %+v %+v", bl, bd)
+	}
+	if len(doc.Individuals) != 3 || doc.Trailer.Tag != "TRLR" {
+		t.Errorf("individuals=%d", len(doc.Individuals))
+	}
+	_, _, err = Parse(strings.NewReader(input))
+	var pe *ParseError
+	if !errors.As(err, &pe) || pe.Line != 5 {
+		t.Errorf("strict err = %v", err)
+	}
+}

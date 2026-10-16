@@ -53,7 +53,7 @@ func ParseWithOptions(r io.Reader, opts *Options) (*gedcom.GedcomDocument, []*Pa
 		return nil, nil, wrapParseError(CodeReadError, 0, "error reading input", "", err)
 	}
 	text, info, findings := Decode(raw)
-	lines, parsed, lineCount, err := parseLines(bytes.NewReader(text), opts)
+	lines, parsed, lineCount, err := parseLines(text, opts)
 	warnings := append(findings, parsed...)
 	if err != nil {
 		return nil, warnings, err
@@ -67,24 +67,61 @@ func ParseWithOptions(r io.Reader, opts *Options) (*gedcom.GedcomDocument, []*Pa
 		}
 	}
 
-	doc := buildDocument(lines, warnings)
+	doc, structural := buildDocument(lines)
+	warnings = append(warnings, structural...)
 	doc.Encoding = info
 	doc.LineCount = lineCount
 	return doc, warnings, nil
 }
 
 // parseLines tokenizes the input into raw lines.
-func parseLines(r io.Reader, opts *Options) ([]rawLine, []*ParseError, int, error) {
-	scanner := bufio.NewScanner(r)
+func withDetails(e *ParseError, kv ...string) *ParseError {
+	e.Details = map[string]string{}
+	for i := 0; i+1 < len(kv); i += 2 {
+		e.Details[kv[i]] = kv[i+1]
+	}
+	return e
+}
+
+// findHeadLine returns the 1-based number of the first "0 HEAD" line, or 1
+// when there is none (nothing is skipped then).
+func findHeadLine(text []byte) int {
+	sc := bufio.NewScanner(bytes.NewReader(text))
+	sc.Buffer(make([]byte, 64*1024), 1<<20)
+	sc.Split(splitGedcomLines)
+	n := 0
+	for sc.Scan() {
+		n++
+		f := strings.Fields(sc.Text())
+		if len(f) >= 2 && f[0] == "0" && f[1] == "HEAD" {
+			return n
+		}
+	}
+	return 1
+}
+
+func parseLines(data []byte, opts *Options) ([]rawLine, []*ParseError, int, error) {
+	headLine := findHeadLine(data)
+	scanner := bufio.NewScanner(bytes.NewReader(data))
 	scanner.Buffer(make([]byte, 64*1024), 1<<20)
 	scanner.Split(splitGedcomLines)
 	var lines []rawLine
 	var warnings []*ParseError
 	lineNum := 0
+	prevLevel := -1
 
 	for scanner.Scan() {
 		lineNum++
 		text := scanner.Text()
+
+		if lineNum < headLine {
+			// Before HEAD: not tokenised, so junk never produces BAD_LINE.
+			continue
+		}
+		if lineNum == headLine && headLine > 1 {
+			warnings = append(warnings, withDetails(newParseError(CodeLinesBeforeHead, 1,
+				"lines before the 0 HEAD line were skipped", ""), "count", strconv.Itoa(headLine-1)))
+		}
 
 		if strings.TrimSpace(text) == "" {
 			warnings = append(warnings, newParseError(CodeEmptyLine, lineNum, "empty line skipped", text))
@@ -100,8 +137,20 @@ func parseLines(r io.Reader, opts *Options) ([]rawLine, []*ParseError, int, erro
 			warnings = append(warnings, warn)
 		}
 		if err != nil {
+			if opts.Lenient {
+				if pe, ok := err.(*ParseError); ok {
+					warnings = append(warnings, pe)
+					continue
+				}
+			}
 			return nil, warnings, lineNum, err
 		}
+		if rl.level > 0 && prevLevel >= 0 && rl.level > prevLevel+1 {
+			warnings = append(warnings, withDetails(newParseError(CodeLevelJump, lineNum,
+				"level jumps by more than one", text),
+				"from", strconv.Itoa(prevLevel), "to", strconv.Itoa(rl.level)))
+		}
+		prevLevel = rl.level
 		lines = append(lines, rl)
 	}
 
@@ -190,11 +239,13 @@ func parseSingleLine(text string, lineNum int, opts *Options) (rawLine, *ParseEr
 }
 
 // buildDocument converts flat raw lines into a hierarchical GedcomDocument.
-func buildDocument(lines []rawLine, warnings []*ParseError) *gedcom.GedcomDocument {
+// It returns the structural findings (UNKNOWN_RECORD).
+func buildDocument(lines []rawLine) (*gedcom.GedcomDocument, []*ParseError) {
 	doc := &gedcom.GedcomDocument{}
+	var findings []*ParseError
 
 	if len(lines) == 0 {
-		return doc
+		return doc, nil
 	}
 
 	// Phase 1: group lines into level-0 blocks
@@ -221,10 +272,13 @@ func buildDocument(lines []rawLine, warnings []*ParseError) *gedcom.GedcomDocume
 	// Phase 2: convert each block into a GedcomRecord and classify
 	for _, b := range blocks {
 		record := buildRecord(b.lines, 0)
-		classifyRecord(doc, record)
+		if !classifyRecord(doc, record) {
+			findings = append(findings, withDetails(newParseError(CodeUnknownRecord, b.lines[0].lineNumber,
+				"unknown top-level record type", ""), "tag", record.Tag))
+		}
 	}
 
-	return doc
+	return doc, findings
 }
 
 // buildRecord builds a hierarchical GedcomRecord from a slice of raw lines.
@@ -274,7 +328,8 @@ func buildRecord(lines []rawLine, startIdx int) gedcom.GedcomRecord {
 }
 
 // classifyRecord routes a level-0 record into the appropriate document slice.
-func classifyRecord(doc *gedcom.GedcomDocument, rec gedcom.GedcomRecord) {
+// It reports false for an unknown record type, which is dropped.
+func classifyRecord(doc *gedcom.GedcomDocument, rec gedcom.GedcomRecord) bool {
 	switch rec.Tag {
 	case "HEAD":
 		doc.Header = rec
@@ -295,7 +350,7 @@ func classifyRecord(doc *gedcom.GedcomDocument, rec gedcom.GedcomRecord) {
 	case "SUBM":
 		doc.Submitters = append(doc.Submitters, rec)
 	default:
-		// Unknown top-level record types are silently dropped.
-		// In the future, could store in an "Other" slice.
+		return false
 	}
+	return true
 }
