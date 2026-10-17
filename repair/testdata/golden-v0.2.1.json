@@ -126,6 +126,76 @@
    "HEADER_MISSING_SUBM"
   ]
  },
+ "encodings/cp437.ged": {
+  "sha256": "d8d9e6167fb405ab35d97e0983a6849d717420f5217052b433251f1cbce0ddc9",
+  "len": 493,
+  "changes": [
+   {
+    "line": 0,
+    "what": "converted from CP437 to UTF-8"
+   },
+   {
+    "line": 4,
+    "what": "set the character set to UTF-8"
+   },
+   {
+    "line": 5,
+    "what": "removed a blank line"
+   },
+   {
+    "line": 7,
+    "what": "removed spaces before the level number"
+   },
+   {
+    "line": 10,
+    "what": "removed a blank line"
+   },
+   {
+    "line": 11,
+    "what": "split a 310-character line into 2 lines"
+   }
+  ],
+  "left": [
+   "HEADER_MISSING_SUBM"
+  ]
+ },
+ "encodings/macroman.ged": {
+  "sha256": "bd6706044c3b4838432b6ea0ba2327ef57159434b63a63d202b3ba1933357ffc",
+  "len": 134,
+  "changes": [
+   {
+    "line": 0,
+    "what": "converted from MacRoman to UTF-8"
+   },
+   {
+    "line": 0,
+    "what": "changed line endings to CRLF"
+   },
+   {
+    "line": 4,
+    "what": "set the character set to UTF-8"
+   },
+   {
+    "line": 7,
+    "what": "removed a blank line"
+   },
+   {
+    "line": 8,
+    "what": "removed spaces before the level number"
+   },
+   {
+    "line": 9,
+    "what": "removed spaces before the level number"
+   },
+   {
+    "line": 11,
+    "what": "added the end-of-file marker (0 TRLR)"
+   }
+  ],
+  "left": [
+   "HEADER_MISSING_SUBM"
+  ]
+ },
  "encodings/mislabeled-utf8-as-ansel.ged": {
   "sha256": "fe1e4c932ffccf750570ef3eec9e8d5ff9c2c20499d5ace27f3dc89fbeb0a99e",
   "len": 112,
