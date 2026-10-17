@@ -165,6 +165,7 @@ The library does not talk to a database or serve HTTP. That is the job of [ligne
 | `exporter` | Writes GEDCOM (with line wrapping), denormalized JSON and CSV, from a tree or from an `EnrichedDocument` |
 | `reconciliation` | Compares two `EnrichedDocument`s and builds a merge plan: id and xref alignment, optional fuzzy matching with an optimal (min-cost) assignment, diffs and conflicts |
 | `pedigreedoc` | Reads and writes the "mixed biological/adoptive parentage" note convention |
+| `repair` | Fixes format problems that have one safe fix (encoding, byte order mark, line endings, blank lines, leading spaces, long lines, missing trailer) without changing the genealogical content; every fix or only the kinds you choose |
 | `cmd/gedvalidate` | CLI: parse a file and print validator findings |
 | `cmd/gedcomstdin` | CLI: read an `EnrichedDocument` as JSON on stdin and print GEDCOM |
 
@@ -186,6 +187,17 @@ enricher.GenerateIDs(ed)                        // optional UUIDs
 
 fmt.Println(len(warnings), len(findings), ed.Stats.Individuals)
 gedcomText := exporter.EnrichedToGEDCOM(ed)     // back to GEDCOM
+```
+
+To repair a file's format, `repair.Repair(data)` applies every fix. To apply only some kinds, pass them by name:
+
+```go
+res, err := repair.RepairWithOptions(data, repair.Options{
+    Fixes: []repair.Fix{repair.FixBlankLines, repair.FixLeadingSpace},
+})
+// res.Data: the repaired bytes (still in the file's own encoding without FixEncoding)
+// res.Changes: what changed, each with its Fix; res.Left: codes still present
+// res.Available: every kind this file could use, with line counts and any reason it needs FixEncoding
 ```
 
 ## Build, test and run

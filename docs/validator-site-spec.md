@@ -175,7 +175,7 @@ func All() []Entry
 ### 1.8 `repair` package
 
 ```go
-type Change struct { Line int; What string }  // What: plain English, e.g. "split a 312-character note into 2 lines"
+type Change struct { Line int; What string; Fix Fix }  // What: plain English, e.g. "split a 312-character note into 2 lines"
 type Result struct {
     Data    []byte   // UTF-8, no BOM
     Changes []Change
@@ -191,6 +191,8 @@ func Repair(data []byte) (*Result, error)
 - remove whitespace before the level number;
 - split lines over 255 bytes with `CONC`, on text tags only: `NOTE`, `TEXT`, `PAGE`, `CONT`, `CONC`, `TITL`, `PUBL`, `AUTH`, `ABBR`. Never split inside a UTF-8 sequence, and never at a space;
 - add `0 TRLR` if it's missing.
+
+**Choosing fixes (v0.3.0).** `RepairWithOptions(data, Options{Fixes: []Fix{...}})` applies only the chosen kinds: `encoding` (re-encode to UTF-8 and set `CHAR UTF-8`, with the stray, unreadable, read-as-UTF-8 and joined-character changes), `bom`, `line-endings`, `blank-lines`, `leading-space`, `long-lines` and `trailer`. A nil `Fixes` means all of them, and `Repair(data)` is exactly that. Every `Change` carries its `Fix`. `Result.Available` lists every kind the file could use, in that order, with its line count, the same whatever is chosen. The page shows it as a checklist with "Repair everything" and "Repair selected". There is no choice per line. Without `encoding` the file keeps its own encoding, and the other fixes edit its original bytes. A UTF-16 file is then left unchanged (`encoding` is `Required`: "this file is UTF-16, so it has to be converted first"). `long-lines`, and a `bom` that overrules a legacy CHAR, are skipped with the reason "needs the conversion to UTF-8". Edits next to a character that the ANSEL or mixed-UTF-8 decoder joins across lines are skipped too. A UTF-8 byte order mark stays unless `bom` is chosen. `Left` still lists the codes of the kinds that were not chosen. The safety tests below hold for each single kind and for all-but-each-kind.
 
 **Never changes:** links, dates, names, the order of lines, xrefs, level jumps, lines before HEAD, or unknown records. Each of these stays in `Left`.
 
