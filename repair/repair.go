@@ -78,6 +78,8 @@ type Result struct {
 	Changes   []Change  `json:"changes"`
 	Left      []string  `json:"left"` // sorted, deduplicated finding codes
 	Available []FixInfo `json:"available"`
+	Applied   []FixInfo `json:"applied"`
+	Skipped   []FixInfo `json:"skipped"`
 }
 
 // maxLine is the GEDCOM limit for a line, in bytes, without its terminator.
@@ -91,6 +93,7 @@ const maxDepth = 100
 const (
 	whatCharset    = "set the character set to UTF-8"
 	whatCRLF       = "changed line endings to CRLF"
+	whatCRLFSome   = "changed %d line endings to CRLF" // when some bare CRs stay
 	whatBlank      = "removed a blank line"
 	whatWhitespace = "removed spaces before the level number"
 	whatTrailer    = "added the end-of-file marker (0 TRLR)"

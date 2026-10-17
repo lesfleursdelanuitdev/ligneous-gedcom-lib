@@ -44,21 +44,32 @@ func Fixes() []Fix { return append([]Fix(nil), catalogue...) }
 
 // The reasons in FixInfo.
 const (
-	reasonUTF16     = "this file is UTF-16, so it has to be converted first"
-	reasonNeedsUTF8 = "needs the conversion to UTF-8"
+	reasonUTF16      = "this file is UTF-16, so it has to be converted first"
+	reasonNeedsUTF8  = "needs the conversion to UTF-8"
+	reasonReadChange = "skipped: it would change how the file is read"
 )
 
-// Options chooses the kinds of repair. A nil Fixes means all of them; an
-// empty, non-nil Fixes means none.
+// rereadOK reports whether out, read again with its own encoding, is want.
+// Tests replace it to reach the retry.
+var rereadOK = func(out, want []byte) bool {
+	again, _, _ := parser.Decode(out)
+	return bytes.Equal(again, want)
+}
+
+// Options chooses the kinds of repair. A nil Fixes (in JSON: "fixes"
+// omitted or null) means every format fix; an empty, non-nil Fixes (in JSON:
+// "fixes": []) means none.
 type Options struct {
-	Fixes []Fix
+	Fixes []Fix `json:"fixes"`
 }
 
 // FixInfo describes a kind of repair the file could use, whether or not it
 // was chosen.
 type FixInfo struct {
-	Fix   Fix `json:"fix"`
-	Lines int `json:"lines"` // lines of the original file it changes (with every fix chosen)
+	Fix Fix `json:"fix"`
+	// Lines: in Available, the lines of the original file it changes with
+	// every fix applied; in Applied, the lines it really changed.
+	Lines int `json:"lines"`
 	// Required: nothing else can be done unless this fix is chosen too.
 	Required bool `json:"required"`
 	// Reason says why the fix is required, or why it is skipped unless
@@ -86,15 +97,25 @@ func Repair(data []byte) (*Result, error) {
 //     UTF-8 text (Reason "needs the conversion to UTF-8");
 //   - FixBOM is skipped when the byte order mark decides how the file is
 //     read (a legacy CHAR with bytes that are not plain UTF-8);
-//   - in an ANSEL file, or a UTF-8 file with bytes the decoder had to fix,
-//     a blank line, a leading-space removal or a line ending is left alone
-//     where it touches a line ending in a non-ASCII byte, because the
-//     decoder joins a character split across such a line and the next CONC
-//     line;
+//   - when the bytes are not already the decoded text, a blank line, a
+//     leading-space removal or a line ending is left alone where it touches
+//     a line ending in a non-ASCII byte, because the decoder may join a
+//     character split across such a line and the next CONC line (an ANSEL
+//     mark, or UTF-8 that the edit would make valid);
+//   - no line is removed or split in HEAD before its CHAR line (or in all
+//     of HEAD when the decoder finds no CHAR), since that changes which
+//     CHAR line the decoder sees in its 50-line window;
 //   - a blank line holding non-ASCII bytes (U+00A0 in Windows-1252, say)
 //     stays, since removing it could change how the encoding is detected;
 //   - the result is decoded again and must read exactly like the original
-//     with the same edits; if it does not, the file is returned unchanged.
+//     with the same edits; if it does not, it is made again without
+//     FixBlankLines and FixLeadingSpace, and if that fails too the file is
+//     returned unchanged.
+//
+// Result.Applied counts the lines each kind really changed. A chosen kind
+// that Available lists but that changed nothing is in Result.Skipped with
+// its reason: "needs the conversion to UTF-8", or "skipped: it would
+// change how the file is read".
 func RepairWithOptions(data []byte, opt Options) (*Result, error) {
 	sel, err := selected(opt)
 	if err != nil {
@@ -104,13 +125,63 @@ func RepairWithOptions(data []byte, opt Options) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	full, touched := a.run(everyFix())
-	res := full
-	if len(sel) != len(catalogue) {
-		res, _ = a.run(sel)
+	full := a.plan(everyFix())
+	avail := a.available(full.touched)
+	if len(sel) == len(catalogue) {
+		res, _ := a.finish(full) // converted: nothing to read again
+		a.report(res, full, sel, avail, nil)
+		return res, nil
 	}
-	res.Available = a.available(touched)
+	o := a.plan(sel)
+	res, ok := a.finish(o)
+	forced := fixSet{}
+	if !ok {
+		// Blank lines and leading spaces change which lines sit next to
+		// each other; try without them before giving up on the rest.
+		retry := fixSet{}
+		for f := range sel {
+			if f == FixBlankLines || f == FixLeadingSpace {
+				forced[f] = true
+			} else {
+				retry[f] = true
+			}
+		}
+		o = a.plan(retry)
+		if res, ok = a.finish(o); !ok {
+			o = &outcome{touched: lineSets{}}
+			res = a.unchanged()
+			forced = sel
+		}
+	}
+	a.report(res, o, sel, avail, forced)
 	return res, nil
+}
+
+// report fills in Available, Applied and Skipped. A chosen kind the file
+// could use that changed no line is skipped, with its reason.
+func (a *analysis) report(res *Result, o *outcome, sel fixSet, avail []FixInfo, forced fixSet) {
+	res.Available = avail
+	res.Applied = []FixInfo{}
+	res.Skipped = []FixInfo{}
+	for _, f := range catalogue {
+		if k := len(o.touched[f]); k > 0 {
+			res.Applied = append(res.Applied, FixInfo{Fix: f, Lines: k})
+		}
+	}
+	for _, av := range avail {
+		if !sel[av.Fix] || len(o.touched[av.Fix]) > 0 || av.Lines == 0 {
+			continue
+		}
+		reason := reasonReadChange
+		switch {
+		case forced[av.Fix]:
+		case !o.conv && a.raw == nil,
+			!o.conv && av.Fix == FixLongLines && !a.same,
+			!o.conv && av.Fix == FixBOM && a.bomNeedsConv:
+			reason = reasonNeedsUTF8
+		}
+		res.Skipped = append(res.Skipped, FixInfo{Fix: av.Fix, Lines: av.Lines, Reason: reason})
+	}
 }
 
 func everyFix() fixSet {
@@ -164,6 +235,10 @@ type analysis struct {
 	charLine     int  // the HEAD.CHAR line, or -1
 	charRewrite  bool // that line has to say UTF-8
 	charAfter    int  // where to insert CHAR when there is none, or -1
+	// charScanEnd: lines from head up to here decide which CHAR line the
+	// decoder finds (see parser scanChar); without the conversion none of
+	// them is removed or split.
+	charScanEnd int
 }
 
 func analyse(data []byte) (*analysis, error) {
@@ -262,7 +337,35 @@ func analyse(data []byte) (*analysis, error) {
 			a.hasTrailer = true
 		}
 	}
+	a.charScanEnd = a.scanEnd()
 	return a, nil
+}
+
+// scanEnd mirrors the parser's scanChar: it reads at most 50 lines from HEAD
+// and stops at the next level-0 line. When it finds a CHAR line, that line
+// is the end; otherwise the end of the HEAD record, since removing a line
+// there could bring a later CHAR into the window.
+func (a *analysis) scanEnd() int {
+	n := len(a.src)
+	isLevel0 := func(i int) bool {
+		f := strings.Fields(a.src[i].text)
+		return len(f) >= 2 && f[0] == "0"
+	}
+	for i, k := a.head, 0; i < n && k < 50; i, k = i+1, k+1 {
+		f := strings.Fields(a.src[i].text)
+		if i > a.head && isLevel0(i) {
+			break
+		}
+		if len(f) >= 2 && f[0] == "1" && strings.ToUpper(f[1]) == "CHAR" {
+			return i
+		}
+	}
+	for i := a.head + 1; i < n; i++ {
+		if isLevel0(i) {
+			return i
+		}
+	}
+	return n
 }
 
 // lineSets holds, per kind, the 1-based original lines it changed.
@@ -287,33 +390,47 @@ type plan struct {
 	common    string
 }
 
-// run applies the fixes in sel and returns the result (without Available)
-// and the original lines each kind changed.
-func (a *analysis) run(sel fixSet) (*Result, lineSets) {
+// outcome is a planned run: what it does to each line, its Changes and the
+// original lines each kind changes. finish turns it into a Result.
+type outcome struct {
+	p                    plan
+	conv                 bool // FixEncoding: work on the decoded lines
+	src                  []srcLine
+	changes              []Change
+	touched              lineSets
+	keepBOM              bool
+	unreadable, readUTF8 bool
+	none                 bool // nothing can be done: keep the file
+}
+
+// plan decides what the fixes in sel do, without writing anything.
+func (a *analysis) plan(sel fixSet) *outcome {
 	conv := sel[FixEncoding]
+	o := &outcome{conv: conv, touched: lineSets{}, changes: []Change{}}
 	if !conv && a.raw == nil {
-		return a.unchanged(), lineSets{}
+		o.none = true
+		return o
 	}
 	src := a.src
-	// Protect, without the conversion, the lines the decoder may join: an
+	// Without the conversion, protect the lines the decoder may join: an
 	// ANSEL mark or a split UTF-8 character at the end of a line belongs to
-	// the next CONC line. The other 8-bit encodings read byte by byte.
+	// the next CONC line, and an edit could also make two stray bytes into
+	// one UTF-8 character. Only needed where decoding is not the identity.
 	guard := false
 	if !conv {
 		src = a.raw
-		guard = !a.same && (a.detected == "ANSEL" || a.detected == "UTF-8")
+		guard = !a.same
 	}
+	o.src = src
 	n := len(src)
-	touched := lineSets{}
-	changes := []Change{}
+	touched := o.touched
 	add := func(line int, what string, f Fix) {
-		changes = append(changes, Change{Line: line, What: what, Fix: f})
+		o.changes = append(o.changes, Change{Line: line, What: what, Fix: f})
 		if line > 0 {
 			touched.mark(f, line)
 		}
 	}
 
-	unreadable, readUTF8 := false, false
 	if conv {
 		if a.detected != "UTF-8" && a.detected != "ASCII" {
 			add(0, "converted from "+a.detected+" to UTF-8", FixEncoding)
@@ -327,11 +444,11 @@ func (a *analysis) run(sel fixSet) (*Result, lineSets) {
 			add(0, whatBOM, FixEncoding)
 		}
 	}
-	keepBOM := a.bomUTF8
+	o.keepBOM = a.bomUTF8
 	if a.bomUTF8 && sel[FixBOM] && (conv || !a.bomNeedsConv) {
 		add(0, whatBOM, FixBOM)
 		touched.mark(FixBOM, 1)
-		keepBOM = false
+		o.keepBOM = false
 	}
 	if conv {
 		// What decoding did to single lines: stray bytes in a UTF-8 file read
@@ -340,14 +457,14 @@ func (a *analysis) run(sel fixSet) (*Result, lineSets) {
 		// the header.
 		for _, f := range a.fixes {
 			if f.UTF8 > 0 { // the header named a legacy encoding
-				readUTF8 = true
+				o.readUTF8 = true
 				add(f.Line, fmt.Sprintf(whatReadUTF8, f.UTF8, a.declared), FixEncoding)
 			}
 			if f.Stray > 0 {
 				add(f.Line, fmt.Sprintf(whatStray, f.Stray), FixEncoding)
 			}
 			if f.Unreadable > 0 {
-				unreadable = true
+				o.unreadable = true
 				add(f.Line, fmt.Sprintf(whatUnreadable, f.Unreadable), FixEncoding)
 			}
 			if f.Joined > 0 { // the CONC line is the next one
@@ -362,7 +479,7 @@ func (a *analysis) run(sel fixSet) (*Result, lineSets) {
 	}
 	for i := a.head; i < n; i++ {
 		if a.blank[i] {
-			if sel[FixBlankLines] && (conv || asciiBlank(a.raw[i].text)) && (!guard || !a.prevHigh(i)) {
+			if sel[FixBlankLines] && (conv || asciiBlank(a.raw[i].text) && i >= a.charScanEnd) && (!guard || !a.prevHigh(i)) {
 				p.removed[i] = true
 				add(i+1, whatBlank, FixBlankLines)
 			}
@@ -391,7 +508,7 @@ func (a *analysis) run(sel fixSet) (*Result, lineSets) {
 	if sel[FixLongLines] && (conv || a.same) {
 		for i := a.head; i < n; i++ {
 			nd := a.nodes[i]
-			if !nd.ok {
+			if !nd.ok || !conv && i < a.charScanEnd {
 				continue
 			}
 			t := p.text(src, a.ws, i)
@@ -422,12 +539,17 @@ func (a *analysis) run(sel fixSet) (*Result, lineSets) {
 		}
 	}
 
-	crChanged := false
+	crFixed, crLeft := 0, 0
 	for i, l := range src {
-		if l.term == "\r" && sel[FixLineEndings] && !p.removed[i] && (!guard || !highEnd(a.raw[i].text)) {
+		if l.term != "\r" || p.removed[i] {
+			continue
+		}
+		if sel[FixLineEndings] && (!guard || !highEnd(a.raw[i].text)) {
 			p.fixCR[i] = true
-			crChanged = true
+			crFixed++
 			touched.mark(FixLineEndings, i+1)
+		} else {
+			crLeft++
 		}
 	}
 	p.common = commonTerm(src, sel[FixLineEndings])
@@ -435,34 +557,41 @@ func (a *analysis) run(sel fixSet) (*Result, lineSets) {
 		p.trailer = true
 		add(n+1, whatTrailer, FixTrailer)
 	}
-	if crChanged {
+	switch {
+	case crFixed > 0 && crLeft == 0:
 		add(0, whatCRLF, FixLineEndings)
+	case crFixed > 0:
+		add(0, fmt.Sprintf(whatCRLFSome, crFixed), FixLineEndings)
 	}
+	o.p = p
+	sort.SliceStable(o.changes, func(x, y int) bool { return o.changes[x].Line < o.changes[y].Line })
+	return o
+}
 
-	out := p.emit(src, a.ws, a.head)
-	if keepBOM {
+// finish writes the planned file. Without the conversion the file is read
+// again with its own encoding and must read like the decoded original with
+// the same edits; ok is false when it does not.
+func (a *analysis) finish(o *outcome) (res *Result, ok bool) {
+	if o.none {
+		return a.unchanged(), true
+	}
+	out := o.p.emit(o.src, a.ws, a.head)
+	if o.keepBOM {
 		out = append([]byte{0xEF, 0xBB, 0xBF}, out...)
 	}
-	if !conv {
-		// The file is read again with its own encoding: it must read like
-		// the decoded original with the same edits.
-		again, _, _ := parser.Decode(out)
-		if !bytes.Equal(again, p.emit(a.src, a.ws, a.head)) {
-			return a.unchanged(), lineSets{}
-		}
+	if !o.conv && !rereadOK(out, o.p.emit(a.src, a.ws, a.head)) {
+		return nil, false
 	}
-
-	sort.SliceStable(changes, func(x, y int) bool { return changes[x].Line < changes[y].Line })
-	res := &Result{Data: out, Changes: changes}
+	res = &Result{Data: out, Changes: o.changes}
 	var extra []string
-	if unreadable {
+	if o.unreadable {
 		extra = append(extra, parser.CodeEncodingBadBytes)
 	}
-	if readUTF8 {
+	if o.readUTF8 {
 		extra = append(extra, parser.CodeEncodingMislabeled)
 	}
 	res.Left = leftCodes(res.Data, extra...)
-	return res, touched
+	return res, true
 }
 
 // unchanged is the result that keeps the file as it is.
@@ -561,6 +690,10 @@ func (a *analysis) available(touched lineSets) []FixInfo {
 		case FixEncoding:
 			if a.utf16 {
 				info.Required, info.Reason = true, reasonUTF16
+			}
+		default:
+			if a.raw == nil { // UTF-16: nothing without the conversion
+				info.Reason = reasonNeedsUTF8
 			}
 		case FixBOM:
 			if a.bomNeedsConv {

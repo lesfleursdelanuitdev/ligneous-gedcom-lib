@@ -65,7 +65,7 @@ func extraInputs() map[string][]byte {
 		"bom stray char ansel":   []byte("\xEF\xBB\xBF0 HEAD\n1 CHAR ANSEL\n0 @I1@ INDI\n1 NAME Ren\xC3\xA9e\n1 NOTE caf\xE9\n0 TRLR\n"),
 		"bom utf8 messy":         []byte("\xEF\xBB\xBF0 HEAD\r1 CHAR UTF-8\r\r  0 @I1@ INDI\r1 NAME Ren\xC3\xA9e\r1 NOTE " + strings.Repeat("ab ", 100) + "z\r"),
 		"utf16 messy":            utf16Messy(),
-		"cp1252 nbsp blank line": []byte("0 HEAD\r\n1 CHAR ANSI\r\n0 @I1@ INDI\r\n1 NAME Ren\xE9e\r\n\xA0\r\n  1 SEX F\r\n0 TRLR\r\n"),
+		"cp1252 nbsp blank line": []byte("0 HEAD\r\n1 CHAR ANSI\r\n0 @I1@ INDI\r\n1 NAME Ren\xE9e\r\n\xA0\r\n1 SEX F\r\n  1 NOTE x\r\n0 TRLR\r\n"),
 	}
 }
 
@@ -90,6 +90,9 @@ func subsetInputs(t *testing.T) map[string][]byte {
 	in := goldenInputs(t)
 	for name, raw := range extraInputs() {
 		in["extra/"+name] = raw
+	}
+	for name, raw := range round1Inputs() {
+		in["round1/"+name] = raw
 	}
 	return in
 }
@@ -262,9 +265,9 @@ func TestAvailable(t *testing.T) {
 		}},
 		{"utf16 messy", utf16Messy(), []FixInfo{
 			{FixEncoding, 5, true, reasonUTF16}, // every line
-			{FixBlankLines, 1, false, ""},
-			{FixLeadingSpace, 1, false, ""},
-			{FixTrailer, 1, false, ""},
+			{FixBlankLines, 1, false, reasonNeedsUTF8},
+			{FixLeadingSpace, 1, false, reasonNeedsUTF8},
+			{FixTrailer, 1, false, reasonNeedsUTF8},
 		}},
 	}
 	for _, c := range cases {
@@ -432,19 +435,19 @@ func TestRawEditsKeepJoins(t *testing.T) {
 	}
 }
 
-// In Windows-1252 nothing is joined across lines, so leading spaces go even
-// after a line of non-ASCII bytes; a blank line made of U+00A0 stays.
+// Without the conversion a blank line made of U+00A0 (0xA0 in Windows-1252)
+// stays, and leading spaces away from non-ASCII line ends go.
 func TestRawWindows1252(t *testing.T) {
 	raw := extraInputs()["cp1252 nbsp blank line"]
 	res, err := RepairWithOptions(raw, Options{Fixes: []Fix{FixBlankLines, FixLeadingSpace}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "0 HEAD\r\n1 CHAR ANSI\r\n0 @I1@ INDI\r\n1 NAME Ren\xE9e\r\n\xA0\r\n1 SEX F\r\n0 TRLR\r\n"
+	want := "0 HEAD\r\n1 CHAR ANSI\r\n0 @I1@ INDI\r\n1 NAME Ren\xE9e\r\n\xA0\r\n1 SEX F\r\n1 NOTE x\r\n0 TRLR\r\n"
 	if string(res.Data) != want {
 		t.Errorf("Data %q", res.Data)
 	}
-	assertChanges(t, res.Changes, []lw{{6, "removed spaces before the level number"}})
+	assertChanges(t, res.Changes, []lw{{7, "removed spaces before the level number"}})
 }
 
 func TestUnknownFix(t *testing.T) {
