@@ -43,7 +43,10 @@ const (
 	// file, with the lines nested under them.
 	FixBrokenLinks Fix = "broken-links"
 	// FixEmptyFamilies removes FAM records with no members and no data of
-	// their own, and the FAMS/FAMC links to them.
+	// their own, and the FAMS/FAMC links to them. With FixBrokenLinks chosen
+	// too, a broken link in a family counts as gone (one run removes a
+	// family whose only member is a broken HUSB); Available counts families
+	// that way, and alone it skips those with "needs broken-links too".
 	FixEmptyFamilies Fix = "empty-families"
 	// FixSubmitter adds a submitter (Options.SubmitterName) when the header
 	// has none.
