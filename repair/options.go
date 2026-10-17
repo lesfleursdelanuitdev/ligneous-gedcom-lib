@@ -176,7 +176,7 @@ func RepairWithOptions(data []byte, opt Options) (*Result, error) {
 	avail := a.available(full.touched)
 	if sameSet(sel, formatFixes()) {
 		res, _ := a.finish(full) // converted: nothing to read again
-		a.report(res, full, sel, avail, nil)
+		a.report(res, full, sel, avail, nil, full.touched)
 		return res, nil
 	}
 	o := a.plan(sel, opt.SubmitterName)
@@ -200,14 +200,28 @@ func RepairWithOptions(data []byte, opt Options) (*Result, error) {
 			forced = sel
 		}
 	}
-	a.report(res, o, sel, avail, forced)
+	a.report(res, o, sel, avail, forced, full.touched)
 	return res, nil
 }
 
 // report fills in Available, Applied and Skipped. A chosen kind the file
 // could use that changed no line is skipped, with its reason.
-func (a *analysis) report(res *Result, o *outcome, sel fixSet, avail []FixInfo, forced fixSet) {
+//
+// A line a data kind removed counts for each chosen format kind that would
+// have changed it (fullTouched: the lines of the every-format-fix plan):
+// there is nothing left for that kind to do there, and it is not skipped.
+func (a *analysis) report(res *Result, o *outcome, sel fixSet, avail []FixInfo, forced fixSet, fullTouched lineSets) {
 	res.Available = avail
+	for f, ls := range fullTouched {
+		if !sel[f] {
+			continue
+		}
+		for l := range ls {
+			if o.dataRemoved[l] {
+				o.touched.mark(f, l)
+			}
+		}
+	}
 	res.Applied = []FixInfo{}
 	res.Skipped = []FixInfo{}
 	for _, f := range catalogue {
@@ -476,12 +490,14 @@ type outcome struct {
 	// skipReason says why a chosen data kind did nothing, when the plan
 	// knows (a missing name, say).
 	skipReason map[Fix]string
+	// dataRemoved holds the 1-based lines the data kinds removed.
+	dataRemoved map[int]bool
 }
 
 // plan decides what the fixes in sel do, without writing anything.
 func (a *analysis) plan(sel fixSet, name string) *outcome {
 	conv := sel[FixEncoding]
-	o := &outcome{conv: conv, touched: lineSets{}, changes: []Change{}, skipReason: map[Fix]string{}}
+	o := &outcome{conv: conv, touched: lineSets{}, changes: []Change{}, skipReason: map[Fix]string{}, dataRemoved: map[int]bool{}}
 	if !conv && a.raw == nil {
 		o.none = true
 		return o

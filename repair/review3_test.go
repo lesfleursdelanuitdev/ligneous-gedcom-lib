@@ -186,3 +186,46 @@ func TestSubmitterFillsEmptySubm(t *testing.T) {
 		t.Errorf("Applied %+v", res.Applied)
 	}
 }
+
+// Re-review: when every broken link sits inside a family that
+// empty-families removes, broken-links is applied (with the family), not
+// skipped.
+var brokenInsideFamily = map[string]struct {
+	in      string
+	applied []FixInfo
+}{
+	"broken HUSB": {headSubm + "0 @I1@ INDI\n1 NAME A /B/\n1 FAMS @F1@\n0 @F1@ FAM\n1 HUSB @I9@\n0 TRLR\n",
+		[]FixInfo{{Fix: FixBrokenLinks, Lines: 1, Kind: KindData}, {Fix: FixEmptyFamilies, Lines: 3, Kind: KindData}}},
+	"broken SOUR with PAGE": {headSubm + "0 @F1@ FAM\n1 SOUR @S9@\n2 PAGE 4\n1 CHAN\n0 TRLR\n",
+		[]FixInfo{{Fix: FixBrokenLinks, Lines: 2, Kind: KindData}, {Fix: FixEmptyFamilies, Lines: 4, Kind: KindData}}},
+	"broken NOTE under FAMS, broken WIFE": {headSubm + "0 @I1@ INDI\n1 FAMS @F1@\n2 NOTE @N9@\n0 @F1@ FAM\n1 WIFE @I9@\n0 TRLR\n",
+		[]FixInfo{{Fix: FixBrokenLinks, Lines: 2, Kind: KindData}, {Fix: FixEmptyFamilies, Lines: 4, Kind: KindData}}},
+}
+
+func TestBrokenLinksInsideRemovedFamily(t *testing.T) {
+	for name, c := range brokenInsideFamily {
+		for _, fixes := range [][]Fix{{FixBrokenLinks, FixEmptyFamilies}, {FixBrokenLinks, FixEmptyFamilies, FixEncoding}} {
+			t.Run(name, func(t *testing.T) {
+				res, err := RepairWithOptions([]byte(c.in), Options{Fixes: fixes})
+				if err != nil {
+					t.Fatal(err)
+				}
+				var applied []FixInfo
+				for _, a := range res.Applied {
+					if a.Kind == KindData {
+						applied = append(applied, a)
+					}
+				}
+				if !reflect.DeepEqual(applied, c.applied) {
+					t.Errorf("%v: Applied %+v, want %+v", fixes, res.Applied, c.applied)
+				}
+				if len(res.Skipped) != 0 {
+					t.Errorf("%v: Skipped %+v", fixes, res.Skipped)
+				}
+				if strings.Contains(string(res.Data), "@F1@") || strings.Contains(string(res.Data), "@I9@") {
+					t.Errorf("%v: Data %q", fixes, res.Data)
+				}
+			})
+		}
+	}
+}

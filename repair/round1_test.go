@@ -130,7 +130,11 @@ func TestChosenKindsAreAppliedOrSkipped(t *testing.T) {
 			applied := map[Fix]int{}
 			for _, a := range res.Applied {
 				applied[a.Fix] = a.Lines
-				if a.Lines <= 0 || !slices.Contains(sel.fixes, a.Fix) || len(lines[a.Fix]) == 0 {
+				// A kind may be applied with no Change of its own when its
+				// lines went with a unit a data kind removed (broken links in
+				// a removed family, a blank line in a removed link).
+				withFamily := len(lines[FixEmptyFamilies])+len(lines[FixBrokenLinks]) > 0 && (a.Fix == FixBrokenLinks || kindOf(a.Fix) == KindFormat)
+				if a.Lines <= 0 || !slices.Contains(sel.fixes, a.Fix) || (len(lines[a.Fix]) == 0 && !withFamily) {
 					t.Errorf("%s/%s: Applied %+v", name, sel.name, a)
 				}
 			}
@@ -140,6 +144,7 @@ func TestChosenKindsAreAppliedOrSkipped(t *testing.T) {
 				if s.Reason == "" || !slices.Contains(sel.fixes, s.Fix) || applied[s.Fix] > 0 {
 					t.Errorf("%s/%s: Skipped %+v", name, sel.name, s)
 				}
+				checkSkipReason(t, name+"/"+sel.name, raw, sel.fixes, s)
 			}
 			for f := range lines {
 				if applied[f] == 0 {
@@ -219,4 +224,42 @@ func TestOptionsJSON(t *testing.T) {
 			t.Errorf("%s lacks %s", b, k)
 		}
 	}
+}
+
+// checkSkipReason: the reason must really apply. A reason that names a
+// missing fix (the conversion, or broken-links) means that adding that fix
+// makes the kind apply; the read-change reason is only possible without the
+// conversion (that is when the file is read again), and the conversion
+// then lets the kind apply.
+func checkSkipReason(t *testing.T, what string, raw []byte, fixes []Fix, s FixInfo) {
+	t.Helper()
+	var need Fix
+	switch s.Reason {
+	case reasonReadChange, reasonNeedsUTF8:
+		need = FixEncoding
+	case reasonNeedsBroken:
+		need = FixBrokenLinks
+	case reasonNeedsName, reasonNameLong:
+		if s.Fix != FixSubmitter {
+			t.Errorf("%s: %+v", what, s)
+		}
+		return
+	default:
+		t.Errorf("%s: unknown reason in %+v", what, s)
+		return
+	}
+	if slices.Contains(fixes, need) {
+		t.Errorf("%s: %s skipped with %q although %s is chosen", what, s.Fix, s.Reason, need)
+		return
+	}
+	res, err := RepairWithOptions(raw, Options{Fixes: append(slices.Clone(fixes), need), SubmitterName: "Test Person"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range res.Applied {
+		if a.Fix == s.Fix {
+			return
+		}
+	}
+	t.Errorf("%s: %s skipped with %q, but adding %s does not apply it either (Skipped %+v)", what, s.Fix, s.Reason, need, res.Skipped)
 }

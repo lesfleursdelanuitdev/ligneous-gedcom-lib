@@ -41,11 +41,12 @@ type dataFacts struct {
 	// familiesWithBroken: empty once broken links are gone (broken-links
 	// chosen too). Available counts these.
 	familiesWithBroken []emptyFamily
-	famWithData        bool // no family can go, and a memberless one has data of its own
-	emptySubm          int  // an empty "1 SUBM" line in HEAD, or -1
-	missingSubm        bool // HEADER_MISSING_SUBM
-	subAfter           int  // the HEAD SUBM line goes after this line
-	trlr               int  // the first 0 TRLR line, or -1
+	famWithData        bool         // no family can go, and a memberless one has data of its own
+	emptySubm          int          // an empty "1 SUBM" line in HEAD, or -1
+	brokenLine         map[int]bool // every line of a broken-link unit
+	missingSubm        bool         // HEADER_MISSING_SUBM
+	subAfter           int          // the HEAD SUBM line goes after this line
+	trlr               int          // the first 0 TRLR line, or -1
 	tokens             map[string]bool
 }
 
@@ -117,6 +118,7 @@ func (a *analysis) analyseData() {
 	d.trlr = -1
 	d.emptySubm = -1
 	d.tokens = map[string]bool{}
+	d.brokenLine = map[int]bool{}
 	defined := map[string]int{}
 	for i, nd := range a.nodes {
 		if !nd.ok {
@@ -160,6 +162,9 @@ func (a *analysis) analyseData() {
 		u := unit{i, lastDescendant(a.nodes, i)}
 		d.broken = append(d.broken, brokenLink{u, pointerKind(nd.tag), v})
 		brokenAt[i] = true
+		for j := u.start; j <= u.end; j++ {
+			d.brokenLine[j] = true
+		}
 		end = u.end
 	}
 
@@ -292,6 +297,12 @@ func (a *analysis) planData(sel fixSet, name string, o *outcome, p *plan, guard 
 			}
 			p.removed[j] = true
 			o.touched.mark(f, j+1)
+			o.dataRemoved[j+1] = true
+			if f == FixEmptyFamilies && sel[FixBrokenLinks] && a.facts.brokenLine[j] {
+				// A broken link inside a removed family is removed too:
+				// broken-links counts it.
+				o.touched.mark(FixBrokenLinks, j+1)
+			}
 			if j > u.start { // every removed line is recorded; a blank one as ""
 				text := a.src[j].text
 				if strings.TrimSpace(text) == "" {
