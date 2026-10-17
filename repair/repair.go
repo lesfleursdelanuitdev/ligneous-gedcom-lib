@@ -41,9 +41,13 @@
 // MaxNestingDepth (100), and no cut sits next to a Unicode space. The message
 // "split a N-character line" counts characters (runes); the 255 limit is bytes.
 //
-// TEXT, PAGE, TITL, PUBL, AUTH and ABBR are not split: the enricher reads only
-// their first line, so a split would cut the text short. Their LINE_TOO_LONG
-// stays in Result.Left.
+// Source and citation text is split too (since v0.3.0, when the enricher
+// started joining it): TITL, AUTH, PUBL, ABBR and TEXT of a level-0 SOUR
+// record, PAGE of a source citation, TEXT under a citation's DATA, and their
+// CONT/CONC lines when those have no children. The enricher reads these with
+// CONC and CONT joined in file order, so the split reads the same. TITL
+// elsewhere (OBJE, say) is still read without its CONC lines and is not
+// split; its LINE_TOO_LONG stays in Result.Left.
 package repair
 
 import (
@@ -244,11 +248,17 @@ func lastDescendant(nodes []node, i int) int {
 // what the enricher reads. See the package comment.
 func canSplit(nodes []node, clean []string, i int) bool {
 	nd := nodes[i]
+	if textJoined(nodes, i) {
+		return true
+	}
 	switch nd.tag {
 	case "NOTE":
 		return noteSplittable(nodes, clean, i)
 	case "CONT", "CONC":
 		p := nd.parent
+		if p >= 0 && textJoined(nodes, p) {
+			return len(nd.children) == 0
+		}
 		if p < 0 || nodes[p].tag != "NOTE" || len(nd.children) > 0 || !noteContinuable(nodes, p) {
 			return false
 		}
@@ -267,6 +277,32 @@ func canSplit(nodes []node, clean []string, i int) bool {
 			}
 		}
 		return true
+	}
+	return false
+}
+
+// textJoined reports whether line i is a source or citation text line that
+// the enricher reads with its CONC and CONT lines joined in file order
+// (enricher childText): TITL, AUTH, PUBL, ABBR or TEXT of a level-0 SOUR
+// record, PAGE of a source citation, or TEXT under a citation's DATA. A CONC
+// right after the line, or after one of its CONT/CONC lines, keeps the text.
+func textJoined(nodes []node, i int) bool {
+	nd := nodes[i]
+	p := nd.parent
+	if p < 0 {
+		return false
+	}
+	switch nd.tag {
+	case "TITL", "AUTH", "PUBL", "ABBR", "TEXT":
+		if nodes[p].level == 0 && nodes[p].tag == "SOUR" {
+			return true
+		}
+		if nd.tag == "TEXT" && nodes[p].tag == "DATA" {
+			gp := nodes[p].parent
+			return gp >= 0 && nodes[gp].level > 0 && nodes[gp].tag == "SOUR"
+		}
+	case "PAGE":
+		return nodes[p].level > 0 && nodes[p].tag == "SOUR"
 	}
 	return false
 }

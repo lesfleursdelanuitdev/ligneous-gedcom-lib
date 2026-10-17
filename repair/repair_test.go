@@ -260,12 +260,18 @@ func TestRepairLongNote(t *testing.T) {
 
 // Long lines that are not split: their tag's continuation is not joined back
 // by the enricher, or the split would change how the enricher reads them.
+// Since v0.3.0 the source and citation text lines of this fixture (PAGE,
+// TITL, AUTH, PUBL, ABBR, TEXT) are split; the notes stay.
 func TestRepairLongUnsplittable(t *testing.T) {
-	res, raw := repairFixture(t, "repair/long-unsplittable.ged")
-	assertChanges(t, res.Changes, nil)
-	if !bytes.Equal(res.Data, raw) {
-		t.Error("data changed")
-	}
+	res, _ := repairFixture(t, "repair/long-unsplittable.ged")
+	assertChanges(t, res.Changes, []lw{
+		{16, "split a 277-character line into 2 lines"},
+		{32, "split a 277-character line into 2 lines"},
+		{33, "split a 277-character line into 2 lines"},
+		{34, "split a 277-character line into 2 lines"},
+		{35, "split a 277-character line into 2 lines"},
+		{36, "split a 277-character line into 2 lines"},
+	})
 	assertLeftHas(t, res, "LINE_TOO_LONG", true)
 }
 

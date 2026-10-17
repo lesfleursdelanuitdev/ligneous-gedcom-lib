@@ -411,18 +411,109 @@
   ]
  },
  "pres2020.ged": {
-  "sha256": "4f29a8deee34c462590cec81374965b3a26d24fc280538255abced3d9e6406a7",
-  "len": 1106165,
+  "sha256": "79000cf883f26e6dab8bd398c4c7f3cf9c5c8acccd42fd706eb7c18f7043425e",
+  "len": 1106349,
   "changes": [
    {
     "line": 0,
     "what": "removed the byte order mark"
+   },
+   {
+    "line": 3282,
+    "what": "split a 283-character line into 2 lines"
+   },
+   {
+    "line": 3313,
+    "what": "split a 283-character line into 2 lines"
+   },
+   {
+    "line": 4543,
+    "what": "split a 280-character line into 2 lines"
+   },
+   {
+    "line": 4556,
+    "what": "split a 280-character line into 2 lines"
+   },
+   {
+    "line": 4565,
+    "what": "split a 280-character line into 2 lines"
+   },
+   {
+    "line": 4578,
+    "what": "split a 280-character line into 2 lines"
+   },
+   {
+    "line": 9800,
+    "what": "split a 280-character line into 2 lines"
+   },
+   {
+    "line": 9821,
+    "what": "split a 280-character line into 2 lines"
+   },
+   {
+    "line": 9847,
+    "what": "split a 280-character line into 2 lines"
+   },
+   {
+    "line": 9868,
+    "what": "split a 280-character line into 2 lines"
+   },
+   {
+    "line": 18038,
+    "what": "split a 271-character line into 2 lines"
+   },
+   {
+    "line": 18123,
+    "what": "split a 271-character line into 2 lines"
+   },
+   {
+    "line": 18160,
+    "what": "split a 271-character line into 2 lines"
+   },
+   {
+    "line": 18183,
+    "what": "split a 271-character line into 2 lines"
+   },
+   {
+    "line": 18244,
+    "what": "split a 271-character line into 2 lines"
+   },
+   {
+    "line": 19931,
+    "what": "split a 268-character line into 2 lines"
+   },
+   {
+    "line": 19939,
+    "what": "split a 268-character line into 2 lines"
+   },
+   {
+    "line": 19946,
+    "what": "split a 268-character line into 2 lines"
+   },
+   {
+    "line": 20016,
+    "what": "split a 268-character line into 2 lines"
+   },
+   {
+    "line": 20146,
+    "what": "split a 275-character line into 2 lines"
+   },
+   {
+    "line": 20160,
+    "what": "split a 275-character line into 2 lines"
+   },
+   {
+    "line": 28242,
+    "what": "split a 280-character line into 2 lines"
+   },
+   {
+    "line": 28304,
+    "what": "split a 280-character line into 2 lines"
    }
   ],
   "left": [
    "BURIAL_BEFORE_DEATH",
    "EVENT_DATE_UNPARSEABLE",
-   "LINE_TOO_LONG",
    "MARRIED_BELOW_MINIMUM_AGE",
    "NAME_MISSING_SURNAME_SLASH"
   ]
@@ -551,9 +642,34 @@
   ]
  },
  "repair/long-unsplittable.ged": {
-  "sha256": "200541032c4819d6a86180a36a23ebfe859a7ab0e7acf3058f7f8d651411e578",
-  "len": 3970,
-  "changes": [],
+  "sha256": "2861aa0e13137ef9240f8df0de5af4d781724f3a43b3c03c0caadae6e1f9851d",
+  "len": 4018,
+  "changes": [
+   {
+    "line": 16,
+    "what": "split a 277-character line into 2 lines"
+   },
+   {
+    "line": 32,
+    "what": "split a 277-character line into 2 lines"
+   },
+   {
+    "line": 33,
+    "what": "split a 277-character line into 2 lines"
+   },
+   {
+    "line": 34,
+    "what": "split a 277-character line into 2 lines"
+   },
+   {
+    "line": 35,
+    "what": "split a 277-character line into 2 lines"
+   },
+   {
+    "line": 36,
+    "what": "split a 277-character line into 2 lines"
+   }
+  ],
   "left": [
    "HEADER_MISSING_SUBM",
    "LEVEL_JUMP",
