@@ -186,21 +186,28 @@ func expectedAfterData(t *testing.T, raw []byte, res *Result) ([]fileLine, []fil
 	decoded, _, _ := parser.Decode(raw)
 	orig := lines(decoded)
 	drop := map[int]bool{}
-	var adds []Change
 	for _, c := range res.Changes {
 		if kindOf(c.Fix) != KindData {
 			continue
 		}
 		if strings.HasPrefix(c.What, "added ") {
-			adds = append(adds, c)
+			// An empty "1 SUBM" line in HEAD is filled in: the original
+			// line goes, the filled one is an added line.
+			if c.Line-1 < len(orig) && strings.TrimSpace(orig[c.Line-1].text) == "1 SUBM" {
+				drop[c.Line-1] = true
+			}
 			continue
 		}
 		end := unitEnd(orig, c.Line-1)
 		var nested []string
 		for j := c.Line - 1; j <= end; j++ {
 			drop[j] = true
-			if j > c.Line-1 && strings.TrimSpace(orig[j].text) != "" {
-				nested = append(nested, orig[j].text)
+			if j > c.Line-1 {
+				text := orig[j].text
+				if strings.TrimSpace(text) == "" {
+					text = ""
+				}
+				nested = append(nested, text)
 			}
 		}
 		if !slices.Equal(nested, c.Removed) {
@@ -213,7 +220,6 @@ func expectedAfterData(t *testing.T, raw []byte, res *Result) ([]fileLine, []fil
 			want = append(want, l)
 		}
 	}
-	_ = adds
 	return orig, want
 }
 
@@ -303,6 +309,11 @@ func dataInputs(t *testing.T) map[string][]byte {
 	in["data/broken"] = []byte(brokenGED)
 	in["data/empty"] = []byte(emptyGED)
 	in["data/subm"] = []byte(submGED)
+	in["data/pointer-tags"] = []byte(pointerTagsGED)
+	in["data/void"] = []byte(voidGED)
+	in["data/broken-families"] = []byte(brokenFamGED)
+	in["data/blank-unit"] = []byte(blankUnitGED)
+	in["data/empty-subm"] = []byte(emptySubmGED)
 	return in
 }
 
@@ -413,7 +424,7 @@ func TestEmptyFamilies(t *testing.T) {
 	if want := []FixInfo{{Fix: FixEmptyFamilies, Lines: 9, Kind: KindData}}; !reflect.DeepEqual(res.Applied, want) {
 		t.Errorf("Applied %+v", res.Applied)
 	}
-	if want := (FixInfo{Fix: FixEmptyFamilies, Lines: 9, Reason: "this family has its own information (events, notes or sources)", Kind: KindData}); !slices.Contains(res.Available, want) {
+	if want := (FixInfo{Fix: FixEmptyFamilies, Lines: 9, Kind: KindData}); !slices.Contains(res.Available, want) {
 		t.Errorf("Available %+v", res.Available)
 	}
 	if !slices.Equal(emptyFamilies(t, res.Data), []string{"@F2@", "@F5@"}) {

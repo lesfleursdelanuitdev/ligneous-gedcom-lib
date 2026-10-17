@@ -79,12 +79,13 @@ func Fixes() []Fix { return append([]Fix(nil), catalogue...) }
 
 // The reasons in FixInfo.
 const (
-	reasonUTF16      = "this file is UTF-16, so it has to be converted first"
-	reasonNeedsUTF8  = "needs the conversion to UTF-8"
-	reasonReadChange = "skipped: it would change how the file is read"
-	reasonFamilyData = "this family has its own information (events, notes or sources)"
-	reasonNeedsName  = "needs a name"
-	reasonNameLong   = "the name is too long (at most 120 characters)"
+	reasonUTF16       = "this file is UTF-16, so it has to be converted first"
+	reasonNeedsUTF8   = "needs the conversion to UTF-8"
+	reasonReadChange  = "skipped: it would change how the file is read"
+	reasonFamilyData  = "this family has its own information (events, notes or sources)"
+	reasonNeedsName   = "needs a name"
+	reasonNameLong    = "the name is too long (at most 120 characters)"
+	reasonNeedsBroken = "needs broken-links too"
 )
 
 // rereadOK reports whether out, read again with its own encoding, is want.

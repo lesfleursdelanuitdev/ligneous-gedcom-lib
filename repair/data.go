@@ -36,13 +36,17 @@ type emptyFamily struct {
 
 // dataFacts is what the data kinds need to know, the same whatever is chosen.
 type dataFacts struct {
-	broken      []brokenLink
-	families    []emptyFamily
-	famWithData bool // a family with no members has data of its own: kept
-	missingSubm bool // HEADER_MISSING_SUBM
-	subAfter    int  // the HEAD SUBM line goes after this line
-	trlr        int  // the first 0 TRLR line, or -1
-	tokens      map[string]bool
+	broken   []brokenLink
+	families []emptyFamily // empty as the file stands
+	// familiesWithBroken: empty once broken links are gone (broken-links
+	// chosen too). Available counts these.
+	familiesWithBroken []emptyFamily
+	famWithData        bool // no family can go, and a memberless one has data of its own
+	emptySubm          int  // an empty "1 SUBM" line in HEAD, or -1
+	missingSubm        bool // HEADER_MISSING_SUBM
+	subAfter           int  // the HEAD SUBM line goes after this line
+	trlr               int  // the first 0 TRLR line, or -1
+	tokens             map[string]bool
 }
 
 // isPointer reports whether v (trimmed) is an xref pointer: "@X@", with no
@@ -50,6 +54,39 @@ type dataFacts struct {
 func isPointer(v string) bool {
 	return len(v) > 2 && v[0] == '@' && v[len(v)-1] == '@' && v[1] != '#' &&
 		!strings.Contains(v[1:len(v)-1], "@")
+}
+
+// pointerTags are the tags whose value is a link when it is an xref. CONT,
+// CONC and every "_" tag are text or custom data: never a link here.
+var pointerTags = map[string]bool{
+	"FAMC": true, "FAMS": true, "HUSB": true, "WIFE": true, "CHIL": true,
+	"ASSO": true, "ALIA": true, "ANCI": true, "DESI": true,
+	"SOUR": true, "NOTE": true, "OBJE": true, "REPO": true, "SUBM": true, "SUBN": true,
+}
+
+// voidPointer is GEDCOM 7's deliberate null pointer: never broken.
+const voidPointer = "@VOID@"
+
+// linkOf returns the xref line i links to, when its tag carries links.
+func (a *analysis) linkOf(i int) (string, bool) {
+	nd := a.nodes[i]
+	if !nd.ok || nd.level == 0 || !pointerTags[nd.tag] {
+		return "", false
+	}
+	v := strings.TrimSpace(value(a.clean[i], nd))
+	return v, isPointer(v) && v != voidPointer
+}
+
+// xrefLike returns the xref-like value of line i, on any tag but CONT/CONC
+// (whose values are text): for the xrefs a new record must not reuse, and
+// the lines that point to a family.
+func (a *analysis) xrefLike(i int) (string, bool) {
+	nd := a.nodes[i]
+	if !nd.ok || nd.level == 0 || nd.tag == "CONT" || nd.tag == "CONC" {
+		return "", false
+	}
+	v := strings.TrimSpace(value(a.clean[i], nd))
+	return v, isPointer(v)
 }
 
 // pointerKind names the record a pointer tag points to.
@@ -78,6 +115,7 @@ var emptyFamilyTags = map[string]bool{"CHAN": true, "RIN": true, "_UID": true, "
 func (a *analysis) analyseData() {
 	d := &a.facts
 	d.trlr = -1
+	d.emptySubm = -1
 	d.tokens = map[string]bool{}
 	defined := map[string]int{}
 	for i, nd := range a.nodes {
@@ -91,7 +129,7 @@ func (a *analysis) analyseData() {
 		if nd.level == 0 && nd.tag == "TRLR" && d.trlr < 0 {
 			d.trlr = i
 		}
-		if v := strings.TrimSpace(value(a.clean[i], nd)); nd.level > 0 && isPointer(v) {
+		if v, ok := a.xrefLike(i); ok {
 			d.tokens[v] = true
 		}
 	}
@@ -104,12 +142,13 @@ func (a *analysis) analyseData() {
 
 	// Broken links: the outermost pointer lines to a missing record.
 	end := -1
+	brokenAt := map[int]bool{}
 	for i, nd := range a.nodes {
-		if !nd.ok || nd.level == 0 || i <= end {
+		if i <= end {
 			continue
 		}
-		v := strings.TrimSpace(value(a.clean[i], nd))
-		if !isPointer(v) || defined[v] > 0 || a.nodes[top(i)].level != 0 {
+		v, ok := a.linkOf(i)
+		if !ok || defined[v] > 0 || a.nodes[top(i)].level != 0 {
 			continue
 		}
 		if t := top(i); a.nodes[t].tag == "HEAD" && (nd.tag == "SUBM" || nd.tag == "SUBN") {
@@ -120,53 +159,66 @@ func (a *analysis) analyseData() {
 		}
 		u := unit{i, lastDescendant(a.nodes, i)}
 		d.broken = append(d.broken, brokenLink{u, pointerKind(nd.tag), v})
+		brokenAt[i] = true
 		end = u.end
 	}
 
 	// Empty families: no members and no data of their own; every pointer
 	// to them is a FAMS or FAMC line of a person (removed with them).
 	pointers := map[string][]int{}
-	for i, nd := range a.nodes {
-		if nd.ok && nd.level > 0 {
-			if v := strings.TrimSpace(value(a.clean[i], nd)); isPointer(v) {
-				pointers[v] = append(pointers[v], i)
-			}
+	for i := range a.nodes {
+		if v, ok := a.xrefLike(i); ok {
+			pointers[v] = append(pointers[v], i)
 		}
 	}
-	for i, nd := range a.nodes {
-		if !nd.ok || nd.level != 0 || nd.tag != "FAM" || nd.xref == "" || defined[nd.xref] != 1 {
-			continue
-		}
-		members, own := false, false
-		for _, c := range nd.children {
-			switch t := a.nodes[c].tag; {
-			case t == "HUSB" || t == "WIFE" || t == "CHIL":
-				members = true
-			case !emptyFamilyTags[t]:
-				own = true
+	// classify finds the empty families. With ignoreBroken, a broken link
+	// in a family counts as gone (broken-links removes it in the same run):
+	// a family whose only member or only content is a broken link is empty.
+	classify := func(ignoreBroken bool) (fams []emptyFamily, withData bool) {
+		for i, nd := range a.nodes {
+			if !nd.ok || nd.level != 0 || nd.tag != "FAM" || nd.xref == "" || defined[nd.xref] != 1 {
+				continue
+			}
+			members, own := false, false
+			for _, c := range nd.children {
+				if ignoreBroken && brokenAt[c] {
+					continue
+				}
+				switch t := a.nodes[c].tag; {
+				case t == "HUSB" || t == "WIFE" || t == "CHIL":
+					members = true
+				case !emptyFamilyTags[t]:
+					own = true
+				}
+			}
+			if members {
+				continue
+			}
+			if own {
+				withData = true
+				continue
+			}
+			f := emptyFamily{unit: unit{i, lastDescendant(a.nodes, i)}, xref: nd.xref}
+			ok := true
+			for _, j := range pointers[nd.xref] {
+				t := a.nodes[j].tag
+				if (t != "FAMS" && t != "FAMC") || a.nodes[top(j)].tag != "INDI" {
+					ok = false // another kind of link to it: removing it would break that
+					break
+				}
+				f.links = append(f.links, unit{j, lastDescendant(a.nodes, j)})
+			}
+			if ok {
+				fams = append(fams, f)
 			}
 		}
-		if members {
-			continue
-		}
-		if own {
-			d.famWithData = true
-			continue
-		}
-		f := emptyFamily{unit: unit{i, lastDescendant(a.nodes, i)}, xref: nd.xref}
-		ok := true
-		for _, j := range pointers[nd.xref] {
-			t := a.nodes[j].tag
-			if (t != "FAMS" && t != "FAMC") || a.nodes[top(j)].tag != "INDI" {
-				ok = false // another kind of link to it: removing it would break that
-				break
-			}
-			f.links = append(f.links, unit{j, lastDescendant(a.nodes, j)})
-		}
-		if ok {
-			d.families = append(d.families, f)
-		}
+		return fams, withData
 	}
+	d.families, _ = classify(false)
+	var withData bool
+	d.familiesWithBroken, withData = classify(true)
+	// The reason is shown only when no family can go at all.
+	d.famWithData = withData && len(d.familiesWithBroken) == 0
 
 	// Submitter: offered when the validator reports HEADER_MISSING_SUBM.
 	if a.hasHead {
@@ -180,7 +232,11 @@ func (a *analysis) analyseData() {
 					}
 				}
 			case "SUBM":
-				subm = subm || strings.TrimSpace(value(a.clean[c], a.nodes[c])) != ""
+				if strings.TrimSpace(value(a.clean[c], a.nodes[c])) != "" {
+					subm = true
+				} else if d.emptySubm < 0 {
+					d.emptySubm = c
+				}
 			}
 		}
 		d.missingSubm = (ver == "5.5" || ver == "5.5.1") && !subm
@@ -201,7 +257,7 @@ func (a *analysis) dataLines(f Fix) int {
 			n += b.size()
 		}
 	case FixEmptyFamilies:
-		for _, fam := range a.facts.families {
+		for _, fam := range a.facts.familiesWithBroken {
 			n += fam.size()
 			for _, l := range fam.links {
 				n += l.size()
@@ -236,8 +292,12 @@ func (a *analysis) planData(sel fixSet, name string, o *outcome, p *plan, guard 
 			}
 			p.removed[j] = true
 			o.touched.mark(f, j+1)
-			if j > u.start && strings.TrimSpace(a.src[j].text) != "" {
-				nested = append(nested, a.src[j].text)
+			if j > u.start { // every removed line is recorded; a blank one as ""
+				text := a.src[j].text
+				if strings.TrimSpace(text) == "" {
+					text = ""
+				}
+				nested = append(nested, text)
 			}
 		}
 		if counted && len(nested) > 0 {
@@ -251,7 +311,13 @@ func (a *analysis) planData(sel fixSet, name string, o *outcome, p *plan, guard 
 	}
 
 	if sel[FixEmptyFamilies] {
-		for _, fam := range a.facts.families {
+		fams := a.facts.families
+		if sel[FixBrokenLinks] {
+			fams = a.facts.familiesWithBroken
+		} else if len(a.facts.familiesWithBroken) > len(fams) {
+			o.skipReason[FixEmptyFamilies] = reasonNeedsBroken
+		}
+		for _, fam := range fams {
 			ok := canDrop(fam.unit)
 			for _, l := range fam.links {
 				ok = ok && canDrop(l)
@@ -278,15 +344,29 @@ func (a *analysis) planData(sel fixSet, name string, o *outcome, p *plan, guard 
 	}
 }
 
-// cleanName is the name with control characters removed and trimmed.
+// cleanName is the name with zero-width characters (U+200B-U+200D, U+FEFF)
+// and other control characters removed, every run of white space (tabs,
+// line breaks, U+00A0, ...) made one space, and no space at either end.
 func cleanName(s string) string {
-	s = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
-			return -1
+	var b strings.Builder
+	space := false
+	for _, r := range s {
+		switch {
+		case r >= '\u200b' && r <= '\u200d', r == '\ufeff':
+			continue
+		case unicode.IsSpace(r):
+			space = true
+			continue
+		case unicode.IsControl(r):
+			continue
 		}
-		return r
-	}, s)
-	return strings.TrimSpace(s)
+		if space && b.Len() > 0 {
+			b.WriteByte(' ')
+		}
+		space = false
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 // encodeName writes name in the output encoding, or reports false.
@@ -347,7 +427,15 @@ func (a *analysis) planSubmitter(name string, o *outcome, p *plan) {
 		}
 	}
 	d := a.facts
-	p.insertAfter[d.subAfter] = append(p.insertAfter[d.subAfter], insLine{"1 SUBM " + xref, "1 SUBM " + xref})
+	pointerLine := a.head + 1
+	if d.emptySubm >= 0 { // fill in the empty "1 SUBM" line
+		p.replace[d.emptySubm] = "1 SUBM " + xref
+		pointerLine = d.emptySubm + 1
+		o.touched.mark(FixSubmitter, pointerLine)
+	} else {
+		p.insertAfter[d.subAfter] = append(p.insertAfter[d.subAfter], insLine{"1 SUBM " + xref, "1 SUBM " + xref})
+		o.touched.mark(FixSubmitter, -1)
+	}
 	rec := []insLine{{"0 " + xref + " SUBM", "0 " + xref + " SUBM"}, {"1 NAME " + raw, "1 NAME " + name}}
 	recLine := len(a.src) + 1
 	if d.trlr >= 0 {
@@ -357,9 +445,9 @@ func (a *analysis) planSubmitter(name string, o *outcome, p *plan) {
 		p.appendEnd = append(p.appendEnd, rec...)
 	}
 	o.changes = append(o.changes,
-		Change{Line: a.head + 1, What: fmt.Sprintf("added you as the person who made this file (%s)", name), Fix: FixSubmitter},
+		Change{Line: pointerLine, What: fmt.Sprintf("added you as the person who made this file (%s)", name), Fix: FixSubmitter},
 		Change{Line: recLine, What: "added a submitter record for " + name, Fix: FixSubmitter})
-	for k := -1; k >= -3; k-- { // three added lines, with no line number of their own
+	for k := -2; k >= -3; k-- { // the record's two added lines, with no line number of their own
 		o.touched.mark(FixSubmitter, k)
 	}
 }
