@@ -3,6 +3,7 @@ package exporter
 import (
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/lesfleursdelanuitdev/ligneous-gedcom-lib/gedcom"
@@ -57,6 +58,10 @@ func maxTagPayload(level int, tag string) int {
 
 // splitUTF8IntoMaxByteChunks splits s into substrings each at most maxBytes when encoded as UTF-8,
 // without breaking code points. A single rune longer than maxBytes is still emitted alone.
+// A cut never falls next to a Unicode space (unicode.IsSpace: also U+00A0, U+3000) when a
+// cut between two non-space runes fits, since a reader that trims line ends would lose the
+// space; otherwise it falls on the last rune boundary that fits. This is the repair
+// package's rule for CONC splits.
 func splitUTF8IntoMaxByteChunks(s string, maxBytes int) []string {
 	if maxBytes <= 0 {
 		if s == "" {
@@ -88,10 +93,29 @@ func splitUTF8IntoMaxByteChunks(s string, maxBytes int) []string {
 		if size == 0 {
 			break
 		}
+		if size < len(remaining) {
+			size = cutAwayFromSpace(remaining, size)
+		}
 		chunks = append(chunks, remaining[:size])
 		remaining = remaining[size:]
 	}
 	return chunks
+}
+
+// cutAwayFromSpace moves the cut at size left to the nearest rune boundary
+// with a non-space rune on both sides, or keeps size when there is none.
+func cutAwayFromSpace(s string, size int) int {
+	for c := size; c > 0; c-- {
+		if !utf8.RuneStart(s[c]) {
+			continue
+		}
+		before, _ := utf8.DecodeLastRuneInString(s[:c])
+		at, _ := utf8.DecodeRuneInString(s[c:])
+		if !unicode.IsSpace(before) && !unicode.IsSpace(at) {
+			return c
+		}
+	}
+	return size
 }
 
 // appendWrappedTaggedOntoRecord splits free-text into primary TAG / CONT / CONC lines so no

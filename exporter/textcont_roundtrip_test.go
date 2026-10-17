@@ -4,6 +4,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/lesfleursdelanuitdev/ligneous-gedcom-lib/enricher"
 	"github.com/lesfleursdelanuitdev/ligneous-gedcom-lib/parser"
@@ -102,3 +104,42 @@ func TestJSONSourceTextJoined(t *testing.T) {
 		t.Errorf("JSON source %q / %q / %q, enricher %q / %q / %q", s.Title, s.Author, s.Publication, e.Title, e.Author, e.Publication)
 	}
 }
+
+// Wrapping never cuts next to a Unicode space (a reader that trims line
+// ends would lose it): spaces at every offset around the cut, including
+// U+00A0 and U+3000, read back the same.
+func TestExportWrapNotAtSpace(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("0 HEAD\n1 GEDC\n2 VERS 5.5.1\n1 CHAR UTF-8\n")
+	var want []string
+	for k := 0; k < 40; k++ {
+		v := strings.Repeat("x", k) + strings.Repeat("ab cd  ef gh　ij ", 40) + "end"
+		want = append(want, v)
+		b.WriteString("0 @S" + strconv.Itoa(k) + "@ SOUR\n1 TITL " + v[:200] + "\n2 CONC " + v[200:] + "\n")
+	}
+	b.WriteString("0 TRLR\n")
+	ed := enrichString(t, b.String())
+	out := EnrichedToGEDCOM(ed)
+	ls := strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n")
+	for i := 0; i+1 < len(ls); i++ {
+		f := strings.Fields(ls[i+1])
+		if len(f) < 2 || f[1] != "CONC" {
+			continue
+		}
+		cont := strings.SplitN(ls[i+1], " CONC ", 2)[1]
+		r, _ := utf8.DecodeLastRuneInString(ls[i])
+		s, _ := utf8.DecodeRuneInString(cont)
+		if unicode.IsSpace(r) || unicode.IsSpace(s) {
+			t.Errorf("cut next to a space between lines %d and %d: …%q | %q…", i+1, i+2, tail(ls[i], 8), head(cont, 8))
+		}
+	}
+	back := enrichString(t, out)
+	for k, s := range back.Sources {
+		if s.Title != want[k] {
+			t.Errorf("source %d: title changed", k)
+		}
+	}
+}
+
+func tail(s string, n int) string { return s[max(0, len(s)-n):] }
+func head(s string, n int) string { return s[:min(len(s), n)] }
