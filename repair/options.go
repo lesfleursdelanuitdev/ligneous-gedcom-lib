@@ -153,6 +153,8 @@ func Repair(data []byte) (*Result, error) {
 //     FixBlankLines and FixLeadingSpace, and if that fails too the file is
 //     returned unchanged.
 //
+// Options{} (nil Fixes) chooses every format kind and no data kind.
+//
 // Result.Applied counts the lines each kind really changed. A chosen kind
 // that Available lists but that changed nothing is in Result.Skipped with
 // its reason: "needs the conversion to UTF-8", or "skipped: it would

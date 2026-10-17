@@ -26,6 +26,14 @@
 // RepairWithOptions for what is skipped then. Result.Available lists the
 // kinds the file could use.
 //
+// Suggested fixes. The data kinds (FixBrokenLinks, FixEmptyFamilies,
+// FixSubmitter) change the family data, so they are never chosen by default:
+// each runs only when named in Options.Fixes, is listed in Available with
+// Kind "data", and every Change says what it removed (Change.Removed) or
+// added. They run before the format kinds, so splitting and the trailer see
+// the final lines. The result reads like the original minus the removed
+// links and records (and their nested lines), plus the added submitter.
+//
 // Splitting. A long line is split only when the enricher joins its CONC lines
 // back into the same text, so the repaired file reads exactly like the
 // original. In practice that is NOTE text:

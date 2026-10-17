@@ -201,6 +201,8 @@ res, err := repair.RepairWithOptions(data, repair.Options{
 // res.Applied: the lines each chosen kind really changed; res.Skipped: chosen kinds that changed nothing, and why
 ```
 
+These fixes are *format* kinds: they never change what the file says. Three *suggested fixes* change the family data, so they run only when you name them: `FixBrokenLinks` removes links to records that don't exist, `FixEmptyFamilies` removes families with no members and no data, and `FixSubmitter` adds a submitter, with its name given in `Options.SubmitterName`. Every Change from these fixes says what was removed (`Change.Removed`) or added.
+
 ## Build, test and run
 
 Requires Go 1.23.5 or later (`go.mod`).
