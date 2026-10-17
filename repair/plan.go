@@ -18,7 +18,12 @@ type Unit struct {
 	What string `json:"what"` // the Change's text
 	// Lines are the exact lines the change removes (data kinds: the lines
 	// under the removed one, as Change.Removed; blank-lines: "") or adds
-	// (submitter, trailer, CHAR, the pieces of a split line).
+	// (submitter, trailer, CHAR, the pieces of a split line). When HEAD has
+	// an empty "1 SUBM" line, the submitter's "1 SUBM @SUBMn@" replaces that
+	// line rather than being added. Lines, Change.Removed and the pieces of
+	// a split are substrings of one string holding the whole decoded file:
+	// keeping any of them keeps the whole file in memory (copy them, e.g.
+	// strings.Clone, to keep only a few).
 	Lines []string `json:"lines,omitempty"`
 }
 
@@ -29,8 +34,12 @@ var onEmit, onLeftCodes func()
 // Plan previews RepairWithOptions: for each kind the file could use, what it
 // would change if chosen together with opt.Fixes (nil: every format kind).
 // It runs the same planning as the repair but writes nothing and does not
-// check the result again, so it assumes the check after a repair without
-// the conversion passes (it always has on the test files). It costs a few
+// check the result again. So Plan matches the repair except when that check
+// (after a repair without the conversion) fails: the repair then drops
+// blank-lines and leading-space, or everything, and reports what it dropped
+// in Result.Skipped ("skipped: it would change how the file is read"). The
+// kinds known to tip the check are refused up front, in both (a non-ASCII
+// submitter name over bytes that are not plain UTF-8). It costs a few
 // plans: the every-format-fix plan (for Available and for the encoding
 // kind), one for opt.Fixes with the format kinds that do not change one
 // another, a second when blank-lines or leading-space would change another

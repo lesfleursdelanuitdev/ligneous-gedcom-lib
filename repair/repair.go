@@ -78,7 +78,8 @@ type Change struct {
 	What string `json:"what"`
 	Fix  Fix    `json:"fix"`
 	// Removed holds the text of the lines nested under a removed line, for
-	// the data kinds, so the page can show exactly what goes.
+	// the data kinds, so the page can show exactly what goes. Each is a
+	// substring of the decoded file: keeping one keeps the whole file.
 	Removed []string `json:"removed,omitempty"`
 }
 
