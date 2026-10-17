@@ -177,11 +177,17 @@ func All() []Entry
 ```go
 type Change struct { Line int; What string; Fix Fix }  // What: plain English, e.g. "split a 312-character note into 2 lines"
 type Result struct {
-    Data    []byte   // UTF-8, no BOM
-    Changes []Change
-    Left    []string // codes found in the file that repair does not fix
+    Data      []byte    // UTF-8 without a BOM when every fix is applied; see "Choosing fixes"
+    Changes   []Change
+    Left      []string  // codes still present after the repair (including those of fixes not chosen)
+    Available []FixInfo // every kind the file could use; Lines counted with every fix applied
+    Applied   []FixInfo // the kinds that changed something, with the lines they really changed
+    Skipped   []FixInfo // chosen and available, but nothing changed, with the reason
 }
-func Repair(data []byte) (*Result, error)
+type FixInfo struct { Fix Fix; Lines int; Required bool; Reason string }
+type Options struct { Fixes []Fix `json:"fixes"` } // nil or omitted: every format fix; []: none
+func Repair(data []byte) (*Result, error)       // = RepairWithOptions(data, Options{})
+func RepairWithOptions(data []byte, opt Options) (*Result, error)
 ```
 
 **Fixes:**
@@ -192,7 +198,7 @@ func Repair(data []byte) (*Result, error)
 - split lines over 255 bytes with `CONC`, on text tags only: `NOTE`, `TEXT`, `PAGE`, `CONT`, `CONC`, `TITL`, `PUBL`, `AUTH`, `ABBR`. Never split inside a UTF-8 sequence, and never at a space;
 - add `0 TRLR` if it's missing.
 
-**Choosing fixes (v0.3.0).** `RepairWithOptions(data, Options{Fixes: []Fix{...}})` applies only the chosen kinds: `encoding` (re-encode to UTF-8 and set `CHAR UTF-8`, with the stray, unreadable, read-as-UTF-8 and joined-character changes), `bom`, `line-endings`, `blank-lines`, `leading-space`, `long-lines` and `trailer`. A nil `Fixes` means all of them, and `Repair(data)` is exactly that. Every `Change` carries its `Fix`. `Result.Available` lists every kind the file could use, in that order, with its line count, the same whatever is chosen. The page shows it as a checklist with "Repair everything" and "Repair selected". There is no choice per line. Without `encoding` the file keeps its own encoding, and the other fixes edit its original bytes. A UTF-16 file is then left unchanged (`encoding` is `Required`: "this file is UTF-16, so it has to be converted first"). `long-lines`, and a `bom` that overrules a legacy CHAR, are skipped with the reason "needs the conversion to UTF-8". Edits next to a character that the ANSEL or mixed-UTF-8 decoder joins across lines are skipped too. A UTF-8 byte order mark stays unless `bom` is chosen. `Left` still lists the codes of the kinds that were not chosen. The safety tests below hold for each single kind and for all-but-each-kind.
+**Choosing fixes (v0.3.0).** `RepairWithOptions(data, Options{Fixes: []Fix{...}})` applies only the chosen kinds: `encoding` (re-encode to UTF-8 and set `CHAR UTF-8`, with the stray, unreadable, read-as-UTF-8 and joined-character changes), `bom`, `line-endings`, `blank-lines`, `leading-space`, `long-lines` and `trailer`. A nil `Fixes` means all of them, and `Repair(data)` is exactly that. Every `Change` carries its `Fix`. `Result.Available` lists every kind the file could use, in that order, with its line count, the same whatever is chosen. The page shows it as a checklist with "Repair everything" and "Repair selected". There is no choice per line. Without `encoding` the file keeps its own encoding, and the other fixes edit its original bytes. A UTF-16 file is then left unchanged (`encoding` is `Required`: "this file is UTF-16, so it has to be converted first"; the other kinds say "needs the conversion to UTF-8"). `long-lines`, and a `bom` that overrules a legacy CHAR, are skipped with the reason "needs the conversion to UTF-8". Edits that could change how the file is read are skipped too: those next to a line ending in a non-ASCII byte (the decoder may join it with the next CONC line), and line removals or splits in HEAD before the CHAR line the decoder finds. The repaired file is then read again, and it must read like the original. If it doesn't, it is made again without `blank-lines` and `leading-space`, and as a last resort it is left unchanged. A chosen kind that changed nothing is listed in `Skipped` with its reason ("needs the conversion to UTF-8" or "skipped: it would change how the file is read"), so a choice is never ignored silently. A UTF-8 byte order mark stays unless `bom` is chosen, even when `encoding` is on: the result is then UTF-8 with a BOM and `CHAR UTF-8` (accepted). When only some bare CRs could be changed, the change reads "changed N line endings to CRLF". `Left` still lists the codes of the kinds that were not chosen. The safety tests below hold for each single kind and for all-but-each-kind.
 
 **Never changes:** links, dates, names, the order of lines, xrefs, level jumps, lines before HEAD, or unknown records. Each of these stays in `Left`.
 

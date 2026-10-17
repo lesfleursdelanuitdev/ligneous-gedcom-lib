@@ -197,7 +197,8 @@ res, err := repair.RepairWithOptions(data, repair.Options{
 })
 // res.Data: the repaired bytes (still in the file's own encoding without FixEncoding)
 // res.Changes: what changed, each with its Fix; res.Left: codes still present
-// res.Available: every kind this file could use, with line counts and any reason it needs FixEncoding
+// res.Available: every kind this file could use, with line counts (every fix applied) and any reason it needs FixEncoding
+// res.Applied: the lines each chosen kind really changed; res.Skipped: chosen kinds that changed nothing, and why
 ```
 
 ## Build, test and run
