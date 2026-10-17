@@ -154,6 +154,8 @@ func appendContinuedParagraphNote(rec *gedcom.GedcomRecord, noteLevel int, para 
 	}
 	chunks := splitUTF8IntoMaxByteChunks(para, maxCont)
 	if len(chunks) == 0 {
+		// An empty paragraph is still a line break: "a\n\nb" keeps it.
+		rec.AddChild(gedcom.GedcomRecord{Level: contLevel, Tag: "CONT"})
 		return
 	}
 	rec.AddChild(gedcom.GedcomRecord{Level: contLevel, Tag: "CONT", Value: chunks[0]})

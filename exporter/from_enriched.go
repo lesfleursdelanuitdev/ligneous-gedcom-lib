@@ -254,7 +254,7 @@ func buildIndividualRecord(
 			src := ed.Sources[sl.SourceIndex]
 			sourRec := gedcom.GedcomRecord{Level: 1, Tag: "SOUR", Value: ensureXrefPointer(src.Xref)}
 			if sl.Page != "" {
-				sourRec.AddChild(gedcom.GedcomRecord{Level: 2, Tag: "PAGE", Value: sl.Page})
+				sourRec.AddChild(wrappedText(2, "PAGE", sl.Page))
 			}
 			rec.AddChild(sourRec)
 		}
@@ -390,7 +390,7 @@ func buildEventRecord(
 		src := ed.Sources[sl.SourceIndex]
 		sourRec := gedcom.GedcomRecord{Level: level + 1, Tag: "SOUR", Value: ensureXrefPointer(src.Xref)}
 		if sl.Page != "" {
-			sourRec.AddChild(gedcom.GedcomRecord{Level: level + 2, Tag: "PAGE", Value: sl.Page})
+			sourRec.AddChild(wrappedText(level+2, "PAGE", sl.Page))
 		}
 		evtRec.AddChild(sourRec)
 	}
@@ -468,7 +468,7 @@ func buildFamilyRecord(
 			src := ed.Sources[sl.SourceIndex]
 			sourRec := gedcom.GedcomRecord{Level: 1, Tag: "SOUR", Value: ensureXrefPointer(src.Xref)}
 			if sl.Page != "" {
-				sourRec.AddChild(gedcom.GedcomRecord{Level: 2, Tag: "PAGE", Value: sl.Page})
+				sourRec.AddChild(wrappedText(2, "PAGE", sl.Page))
 			}
 			rec.AddChild(sourRec)
 		}
@@ -483,16 +483,16 @@ func buildFamilyRecord(
 func buildSourceRecord(ed *enricher.EnrichedDocument, src enricher.EnrichedSource, mediaIndices []int) gedcom.GedcomRecord {
 	rec := gedcom.GedcomRecord{Level: 0, Tag: "SOUR", Xref: ensureXrefPointer(src.Xref)}
 	if src.Title != "" {
-		rec.AddChild(gedcom.GedcomRecord{Level: 1, Tag: "TITL", Value: src.Title})
+		rec.AddChild(wrappedText(1, "TITL", src.Title))
 	}
 	if src.Author != "" {
-		rec.AddChild(gedcom.GedcomRecord{Level: 1, Tag: "AUTH", Value: src.Author})
+		rec.AddChild(wrappedText(1, "AUTH", src.Author))
 	}
 	if src.Publication != "" {
-		rec.AddChild(gedcom.GedcomRecord{Level: 1, Tag: "PUBL", Value: src.Publication})
+		rec.AddChild(wrappedText(1, "PUBL", src.Publication))
 	}
 	if src.Abbreviation != "" {
-		rec.AddChild(gedcom.GedcomRecord{Level: 1, Tag: "ABBR", Value: src.Abbreviation})
+		rec.AddChild(wrappedText(1, "ABBR", src.Abbreviation))
 	}
 	if strings.TrimSpace(src.Text) != "" {
 		txt := gedcom.GedcomRecord{Level: 1, Tag: "TEXT"}
@@ -903,4 +903,13 @@ func FromEnrichedToJSON(ed *enricher.EnrichedDocument) *DenormalizedJSON {
 func FromEnrichedToCSV(ed *enricher.EnrichedDocument) (string, error) {
 	doc := FromEnriched(ed)
 	return ToCSVString(doc)
+}
+
+// wrappedText builds a text line (TITL, AUTH, PUBL, ABBR, PAGE) the way TEXT
+// and NOTE are written: "\n" becomes CONT, and any line over the limit goes on
+// in CONC lines, so the enricher reads the same value back.
+func wrappedText(level int, tag, value string) gedcom.GedcomRecord {
+	rec := gedcom.GedcomRecord{Level: level, Tag: tag}
+	appendWrappedTaggedOntoRecord(&rec, level, "", tag, value)
+	return rec
 }

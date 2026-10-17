@@ -71,6 +71,27 @@ func (r *GedcomRecord) ChildValue(tag string) string {
 	return ""
 }
 
+// ChildText returns the value of the first child with tag, with that
+// child's CONC lines joined verbatim and its CONT lines joined with "\n", in
+// file order: a text value split across lines, read whole. Use it for the
+// text tags of sources and citations (TITL, AUTH, ABBR, PUBL, TEXT, PAGE).
+func (r *GedcomRecord) ChildText(tag string) string {
+	child := r.FirstChildByTag(tag)
+	if child == nil {
+		return ""
+	}
+	v := child.Value
+	for _, c := range child.Children {
+		switch c.Tag {
+		case "CONC":
+			v += c.Value
+		case "CONT":
+			v += "\n" + c.Value
+		}
+	}
+	return v
+}
+
 // TrimmedValue returns Value without leading and trailing whitespace. The
 // parser keeps values verbatim, so "1 HUSB  @I1@" has Value " @I1@"; read
 // pointers, SEX, NAME, DATE, PLAC and other code-like values with this.

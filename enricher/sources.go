@@ -118,23 +118,5 @@ func (e *enricherState) extractRecordSources(ed *EnrichedDocument, rec gedcom.Ge
 	}
 }
 
-// childText returns the value of rec's first child with tag, with that
-// child's CONC lines joined verbatim and its CONT lines joined with "\n", in
-// file order. It is for the text tags of sources and citations (TITL, AUTH,
-// ABBR, PUBL, TEXT, PAGE), so a value split across lines reads whole.
-func childText(rec *gedcom.GedcomRecord, tag string) string {
-	child := rec.FirstChildByTag(tag)
-	if child == nil {
-		return ""
-	}
-	v := child.Value
-	for _, c := range child.Children {
-		switch c.Tag {
-		case "CONC":
-			v += c.Value
-		case "CONT":
-			v += "\n" + c.Value
-		}
-	}
-	return v
-}
+// childText is rec.ChildText: CONC joined verbatim, CONT with "\n".
+func childText(rec *gedcom.GedcomRecord, tag string) string { return rec.ChildText(tag) }

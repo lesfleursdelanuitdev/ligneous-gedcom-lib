@@ -39,9 +39,9 @@ func ToJSON(doc *gedcom.GedcomDocument) *DenormalizedJSON {
 		if srcRec.Xref != "" {
 			result.Sources[srcRec.Xref] = DenormalizedSource{
 				Xref:        srcRec.Xref,
-				Title:       srcRec.ChildValue("TITL"),
-				Author:      srcRec.ChildValue("AUTH"),
-				Publication: srcRec.ChildValue("PUBL"),
+				Title:       srcRec.ChildText("TITL"),
+				Author:      srcRec.ChildText("AUTH"),
+				Publication: srcRec.ChildText("PUBL"),
 			}
 		}
 	}
