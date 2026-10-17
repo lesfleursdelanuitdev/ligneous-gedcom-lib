@@ -41,13 +41,14 @@ type dataFacts struct {
 	// familiesWithBroken: empty once broken links are gone (broken-links
 	// chosen too). Available counts these.
 	familiesWithBroken []emptyFamily
-	famWithData        bool           // no family can go, and a memberless one has data of its own
-	emptySubm          int            // an empty "1 SUBM" line in HEAD, or -1
-	brokenLine         map[int]bool   // every line of a broken-link unit
-	missingSubm        bool           // HEADER_MISSING_SUBM
-	subAfter           int            // the HEAD SUBM line goes after this line
-	trlr               int            // the first 0 TRLR line, or -1
-	defined            map[string]int // level-0 xrefs, with how often each is defined
+	famWithData        bool            // no family can go, and a memberless one has data of its own
+	emptySubm          int             // an empty "1 SUBM" line in HEAD, or -1
+	brokenLine         map[int]bool    // every line of a broken-link unit
+	missingSubm        bool            // HEADER_MISSING_SUBM
+	subAfter           int             // the HEAD SUBM line goes after this line
+	trlr               int             // the first 0 TRLR line, or -1
+	defined            map[string]int  // level-0 xrefs, with how often each is defined
+	subValues          map[string]bool // "@SUBM..." line values, built on first use
 }
 
 // isPointer reports whether v (trimmed) is an xref pointer: "@X@", with no
@@ -337,25 +338,47 @@ func (a *analysis) planData(sel fixSet, name string, o *outcome, p *plan, guard 
 	}
 
 	if sel[FixEmptyFamilies] {
-		fams := a.facts.families
-		if sel[FixBrokenLinks] {
-			fams = a.facts.familiesWithBroken
-		} else if len(a.facts.familiesWithBroken) > len(fams) {
-			o.skipReason[FixEmptyFamilies] = reasonNeedsBroken // none can go alone
-			o.partial[FixEmptyFamilies] = reasonSomeFamilies   // some can
-		}
-		for _, fam := range fams {
+		// Every family that could go (with broken-links) is removed, or
+		// counted under why not: the guard (it would change how the file is
+		// read), or broken-links missing (it is empty only once they go).
+		famOK := func(fam emptyFamily) bool {
 			ok := canDrop(fam.unit)
 			for _, l := range fam.links {
 				ok = ok && canDrop(l)
 			}
-			if !ok {
-				continue // all or nothing: a half-removed family is a broken link
-			}
-			drop(fam.unit, "removed an empty family "+fam.xref, FixEmptyFamilies, false)
+			return ok // all or nothing: a half-removed family is a broken link
+		}
+		alone := map[string]bool{}
+		for _, fam := range a.facts.families {
+			alone[fam.xref] = true
+		}
+		guarded, needBroken := 0, 0
+		for _, fam := range a.facts.familiesWithBroken {
+			lines := fam.size()
 			for _, l := range fam.links {
-				drop(l, "removed a link to the removed family "+fam.xref, FixEmptyFamilies, false)
+				lines += l.size()
 			}
+			switch {
+			case !famOK(fam):
+				guarded += lines
+			case !sel[FixBrokenLinks] && !alone[fam.xref]:
+				needBroken += lines
+			default:
+				drop(fam.unit, "removed an empty family "+fam.xref, FixEmptyFamilies, false)
+				for _, l := range fam.links {
+					drop(l, "removed a link to the removed family "+fam.xref, FixEmptyFamilies, false)
+				}
+			}
+		}
+		if guarded > 0 {
+			o.parts[FixEmptyFamilies] = append(o.parts[FixEmptyFamilies], skipPart{reasonReadChange, guarded})
+		}
+		if needBroken > 0 {
+			reason := reasonNeedsBroken // none can go alone
+			if o.touched.count(FixEmptyFamilies) > 0 {
+				reason = reasonSomeFamilies // some can
+			}
+			o.parts[FixEmptyFamilies] = append(o.parts[FixEmptyFamilies], skipPart{reason, needBroken})
 		}
 	}
 	if sel[FixBrokenLinks] {
@@ -397,8 +420,15 @@ func cleanName(s string) string {
 }
 
 // encodeName writes name in the output encoding, or reports false.
+//
+// Without the conversion a non-ASCII name must not change how the file is
+// read. In UTF-8 that holds only when the bytes are already exactly the
+// decoded text (no stray or unreadable bytes, no byte order mark that
+// decides the reading): otherwise valid UTF-8 in the name can tip the
+// decoder's UTF-8 majority. In a code page the name must hold no valid
+// UTF-8 sequence, for the same reason.
 func (a *analysis) encodeName(name string, conv bool) (string, bool) {
-	if conv || a.detected == "UTF-8" {
+	if conv {
 		return name, true
 	}
 	ascii := true
@@ -407,6 +437,9 @@ func (a *analysis) encodeName(name string, conv bool) (string, bool) {
 	}
 	if ascii {
 		return name, true
+	}
+	if a.detected == "UTF-8" {
+		return name, a.same && !a.bomNeedsConv
 	}
 	var cm *charmap.Charmap
 	switch a.detected {
@@ -422,6 +455,13 @@ func (a *analysis) encodeName(name string, conv bool) (string, bool) {
 	out, err := cm.NewEncoder().String(name)
 	if err != nil {
 		return "", false
+	}
+	for i := 0; i < len(out); {
+		r, size := utf8.DecodeRuneInString(out[i:])
+		if size > 1 && r != utf8.RuneError {
+			return "", false // reads as UTF-8: it could tip the detection
+		}
+		i += size
 	}
 	return out, true
 }
@@ -449,7 +489,7 @@ func (a *analysis) planSubmitter(name string, o *outcome, p *plan) {
 	}
 	xref := ""
 	for k := 1; xref == ""; k++ {
-		if x := "@SUBM" + strconv.Itoa(k) + "@"; !a.xrefInUse(x) {
+		if x := "@SUBM" + strconv.Itoa(k) + "@"; !a.subXrefInUse(x) {
 			xref = x
 		}
 	}
@@ -480,16 +520,20 @@ func (a *analysis) planSubmitter(name string, o *outcome, p *plan) {
 	}
 }
 
-// xrefInUse reports whether x is a level-0 xref or the value of a line (any
-// tag but CONT/CONC) of the file: a new record must not take it.
-func (a *analysis) xrefInUse(x string) bool {
+// subXrefInUse reports whether x (an "@SUBMn@") is a level-0 xref or the
+// value of a line (any tag but CONT/CONC) of the file: a new record must not
+// take it. The "@SUBM..." values in use are collected once, on first use.
+func (a *analysis) subXrefInUse(x string) bool {
 	if a.facts.defined[x] > 0 {
 		return true
 	}
-	for i := range a.nodes {
-		if v, ok := a.xrefLike(i); ok && v == x {
-			return true
+	if a.facts.subValues == nil {
+		a.facts.subValues = map[string]bool{}
+		for i := range a.nodes {
+			if v, ok := a.xrefLike(i); ok && strings.HasPrefix(v, "@SUBM") {
+				a.facts.subValues[v] = true
+			}
 		}
 	}
-	return false
+	return a.facts.subValues[x]
 }

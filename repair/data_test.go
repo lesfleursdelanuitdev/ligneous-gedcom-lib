@@ -319,6 +319,8 @@ func dataInputs(t *testing.T) map[string][]byte {
 	in["data/blank-unit"] = []byte(blankUnitGED)
 	in["data/empty-subm"] = []byte(emptySubmGED)
 	in["data/partial-families"] = []byte(partialFamGED)
+	in["data/bom-stray"] = []byte(bomStrayGED)
+	in["data/guard-families"] = []byte(guardFamGED)
 	for name, c := range brokenInsideFamily {
 		in["data/inside-family/"+name] = []byte(c.in)
 	}

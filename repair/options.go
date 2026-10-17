@@ -240,10 +240,13 @@ func (a *analysis) report(res *Result, o *outcome, sel fixSet, avail []FixInfo, 
 		if !sel[av.Fix] || av.Lines == 0 {
 			continue
 		}
-		if k := o.touched.count(av.Fix); k > 0 {
-			if r := o.partial[av.Fix]; r != "" && k < av.Lines {
-				res.Skipped = append(res.Skipped, FixInfo{Fix: av.Fix, Lines: av.Lines - k, Reason: r, Kind: av.Kind})
+		if parts := o.parts[av.Fix]; len(parts) > 0 && !forced[av.Fix] {
+			for _, sp := range parts {
+				res.Skipped = append(res.Skipped, FixInfo{Fix: av.Fix, Lines: sp.lines, Reason: sp.reason, Kind: av.Kind})
 			}
+			continue
+		}
+		if o.touched.count(av.Fix) > 0 {
 			continue
 		}
 		reason := reasonReadChange
@@ -542,6 +545,12 @@ type plan struct {
 	appendEnd                 []insLine
 }
 
+// skipPart is lines a kind left for one reason.
+type skipPart struct {
+	reason string
+	lines  int
+}
+
 // insLine is an added line, as written in the file's own encoding (raw) and
 // in UTF-8 (dec).
 type insLine struct{ raw, dec string }
@@ -562,8 +571,8 @@ type outcome struct {
 	skipReason map[Fix]string
 	// dataRemoved holds the 1-based lines the data kinds removed.
 	dataRemoved map[int]bool
-	// partial: a chosen kind that did part of its work, and why not the rest.
-	partial map[Fix]string
+	// parts: the lines a chosen kind left, by reason (empty-families).
+	parts map[Fix][]skipPart
 	// The submitter's added lines, for Plan.
 	subPointer string
 	subRecord  []string
@@ -576,7 +585,7 @@ func (a *analysis) plan(sel fixSet, name string) *outcome { return a.planWith(se
 // Plan's preview of a data kind, which the format kinds cannot change).
 func (a *analysis) planWith(sel fixSet, name string, dataOnly bool) *outcome {
 	conv := sel[FixEncoding]
-	o := &outcome{conv: conv, touched: lineSets{}, skipReason: map[Fix]string{}, partial: map[Fix]string{}, dataRemoved: map[int]bool{}}
+	o := &outcome{conv: conv, touched: lineSets{}, skipReason: map[Fix]string{}, parts: map[Fix][]skipPart{}, dataRemoved: map[int]bool{}}
 	est := len(a.fixes) + 16
 	if sel[FixBlankLines] {
 		est += a.nBlank

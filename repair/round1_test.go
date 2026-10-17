@@ -142,12 +142,16 @@ func TestChosenKindsAreAppliedOrSkipped(t *testing.T) {
 			for _, s := range res.Skipped {
 				skipped[s.Fix] = s.Reason
 				// A kind may be in both lists only when it did part of its
-				// work and the rest needs broken-links.
-				partial := applied[s.Fix] > 0 && s.Reason == reasonSomeFamilies
+				// work and the rest needs broken-links (or, for families,
+				// the conversion).
+				// empty-families also lists the families the guard kept
+				// (it would change how the file is read).
+				partial := applied[s.Fix] > 0 && (s.Reason == reasonSomeFamilies ||
+					s.Fix == FixEmptyFamilies && s.Reason == reasonReadChange)
 				if s.Reason == "" || !slices.Contains(sel.fixes, s.Fix) || (applied[s.Fix] > 0 && !partial) {
 					t.Errorf("%s/%s: Skipped %+v", name, sel.name, s)
 				}
-				checkSkipReason(t, name+"/"+sel.name, raw, sel.fixes, s)
+				checkSkipReason(t, name+"/"+sel.name, raw, Options{Fixes: sel.fixes, SubmitterName: "Test Person"}, s, applied[s.Fix])
 			}
 			for f := range lines {
 				if applied[f] == 0 {
@@ -233,9 +237,11 @@ func TestOptionsJSON(t *testing.T) {
 // missing fix (the conversion, or broken-links) means that adding that fix
 // makes the kind apply; the read-change reason is only possible without the
 // conversion (that is when the file is read again), and the conversion
-// then lets the kind apply.
-func checkSkipReason(t *testing.T, what string, raw []byte, fixes []Fix, s FixInfo) {
+// then lets the kind apply. The fix it names must make up for every
+// skipped line: applied with it >= applied without it + skipped.
+func checkSkipReason(t *testing.T, what string, raw []byte, opt Options, s FixInfo, appliedAlone int) {
 	t.Helper()
+	fixes := opt.Fixes
 	var need Fix
 	switch s.Reason {
 	case reasonReadChange, reasonNeedsUTF8:
@@ -255,14 +261,35 @@ func checkSkipReason(t *testing.T, what string, raw []byte, fixes []Fix, s FixIn
 		t.Errorf("%s: %s skipped with %q although %s is chosen", what, s.Fix, s.Reason, need)
 		return
 	}
-	res, err := RepairWithOptions(raw, Options{Fixes: append(slices.Clone(fixes), need), SubmitterName: "Test Person"})
-	if err != nil {
-		t.Fatal(err)
+	// Add the fix the reason names. When the kind is then still held back by
+	// another fix it names (a UTF-16 file whose families also need
+	// broken-links), add that one too.
+	with := slices.Clone(fixes)
+	var res *Result
+	for step := 0; step < 3 && need != ""; step++ {
+		with = append(with, need)
+		var err error
+		if res, err = RepairWithOptions(raw, Options{Fixes: with, SubmitterName: opt.SubmitterName}); err != nil {
+			t.Fatal(err)
+		}
+		need = ""
+		for _, sk := range res.Skipped {
+			if sk.Fix != s.Fix {
+				continue
+			}
+			switch {
+			case sk.Reason == reasonNeedsUTF8 && !slices.Contains(with, FixEncoding):
+				need = FixEncoding
+			case (sk.Reason == reasonNeedsBroken || sk.Reason == reasonSomeFamilies) && !slices.Contains(with, FixBrokenLinks):
+				need = FixBrokenLinks
+			}
+		}
 	}
 	for _, a := range res.Applied {
-		if a.Fix == s.Fix && a.Lines >= s.Lines {
+		if a.Fix == s.Fix && a.Lines >= appliedAlone+s.Lines {
 			return
 		}
 	}
-	t.Errorf("%s: %s skipped with %q, but adding %s does not apply it either (Skipped %+v)", what, s.Fix, s.Reason, need, res.Skipped)
+	t.Errorf("%s: %s skipped %d lines with %q (applied %d), but adding %v does not make up for them (Applied %+v, Skipped %+v)",
+		what, s.Fix, s.Lines, s.Reason, appliedAlone, with[len(fixes):], res.Applied, res.Skipped)
 }
