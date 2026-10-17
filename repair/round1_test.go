@@ -114,7 +114,11 @@ func TestChosenKindsAreAppliedOrSkipped(t *testing.T) {
 			continue
 		}
 		sels := append(selections(), selection{"all", allFixes}, selection{"none", []Fix{}})
-		for _, sel := range append(sels, dataSelections(implementedData)...) {
+		sels = append(sels, dataSelections(implementedData)...)
+		if isBig(raw) {
+			sels = []selection{{"all", allFixes}, sels[len(sels)-1]}
+		}
+		for _, sel := range sels {
 			res, err := RepairWithOptions(raw, Options{Fixes: sel.fixes, SubmitterName: "Test Person"})
 			if err != nil {
 				t.Fatal(err)

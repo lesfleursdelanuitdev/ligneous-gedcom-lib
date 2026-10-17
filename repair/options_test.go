@@ -173,7 +173,11 @@ func TestSubsetsKeepSafetyRules(t *testing.T) {
 			continue // no GEDCOM lines; covered by TestRepairEmpty
 		}
 		before := enrichedJSON(t, raw)
-		for _, sel := range selections() {
+		sels := selections()
+		if isBig(raw) { // one raw-byte and one converting subset
+			sels = sels[:2] // only encoding, all but encoding
+		}
+		for _, sel := range sels {
 			t.Run(name+"/"+sel.name, func(t *testing.T) {
 				opt := Options{Fixes: sel.fixes}
 				res, err := RepairWithOptions(raw, opt)

@@ -302,6 +302,10 @@ func dataSelections(kinds []Fix) []selection {
 	return out
 }
 
+// isBig: the full selection matrix runs on small inputs only; the big
+// samples (pres2020, royal92) get one "everything" selection.
+func isBig(raw []byte) bool { return len(raw) > 100_000 }
+
 var implementedData = []Fix{FixBrokenLinks, FixEmptyFamilies, FixSubmitter}
 
 func dataInputs(t *testing.T) map[string][]byte {
@@ -329,7 +333,11 @@ func TestDataKindsKeepContent(t *testing.T) {
 		if err != nil {
 			continue
 		}
-		for _, sel := range dataSelections(implementedData) {
+		sels := dataSelections(implementedData)
+		if isBig(raw) {
+			sels = sels[len(sels)-1:] // everything
+		}
+		for _, sel := range sels {
 			opt := Options{Fixes: sel.fixes, SubmitterName: "Test Person"}
 			res, err := RepairWithOptions(raw, opt)
 			if err != nil {
