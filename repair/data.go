@@ -112,6 +112,51 @@ func (a *analysis) analyseData() {
 		end = u.end
 	}
 
+	// Empty families: no members and no data of their own; every pointer
+	// to them is a FAMS or FAMC line of a person (removed with them).
+	pointers := map[string][]int{}
+	for i, nd := range a.nodes {
+		if nd.ok && nd.level > 0 {
+			if v := strings.TrimSpace(value(a.clean[i], nd)); isPointer(v) {
+				pointers[v] = append(pointers[v], i)
+			}
+		}
+	}
+	for i, nd := range a.nodes {
+		if !nd.ok || nd.level != 0 || nd.tag != "FAM" || nd.xref == "" || defined[nd.xref] != 1 {
+			continue
+		}
+		members, own := false, false
+		for _, c := range nd.children {
+			switch t := a.nodes[c].tag; {
+			case t == "HUSB" || t == "WIFE" || t == "CHIL":
+				members = true
+			case !emptyFamilyTags[t]:
+				own = true
+			}
+		}
+		if members {
+			continue
+		}
+		if own {
+			d.famWithData = true
+			continue
+		}
+		f := emptyFamily{unit: unit{i, lastDescendant(a.nodes, i)}, xref: nd.xref}
+		ok := true
+		for _, j := range pointers[nd.xref] {
+			t := a.nodes[j].tag
+			if (t != "FAMS" && t != "FAMC") || a.nodes[top(j)].tag != "INDI" {
+				ok = false // another kind of link to it: removing it would break that
+				break
+			}
+			f.links = append(f.links, unit{j, lastDescendant(a.nodes, j)})
+		}
+		if ok {
+			d.families = append(d.families, f)
+		}
+	}
+
 }
 
 // dataLines is the Available line count of a data kind: the lines it
@@ -122,6 +167,13 @@ func (a *analysis) dataLines(f Fix) int {
 	case FixBrokenLinks:
 		for _, b := range a.facts.broken {
 			n += b.size()
+		}
+	case FixEmptyFamilies:
+		for _, fam := range a.facts.families {
+			n += fam.size()
+			for _, l := range fam.links {
+				n += l.size()
+			}
 		}
 	}
 	return n
@@ -158,6 +210,21 @@ func (a *analysis) planData(sel fixSet, name string, o *outcome, p *plan, guard 
 		o.changes = append(o.changes, Change{Line: u.start + 1, What: what, Fix: f, Removed: nested})
 	}
 
+	if sel[FixEmptyFamilies] {
+		for _, fam := range a.facts.families {
+			ok := canDrop(fam.unit)
+			for _, l := range fam.links {
+				ok = ok && canDrop(l)
+			}
+			if !ok {
+				continue // all or nothing: a half-removed family is a broken link
+			}
+			drop(fam.unit, "removed an empty family "+fam.xref, FixEmptyFamilies, false)
+			for _, l := range fam.links {
+				drop(l, "removed a link to the removed family "+fam.xref, FixEmptyFamilies, false)
+			}
+		}
+	}
 	if sel[FixBrokenLinks] {
 		for _, b := range a.facts.broken {
 			if p.removed[b.start] || !canDrop(b.unit) {

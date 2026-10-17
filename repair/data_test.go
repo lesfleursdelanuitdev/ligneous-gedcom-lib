@@ -293,11 +293,12 @@ func dataSelections(kinds []Fix) []selection {
 	return out
 }
 
-var implementedData = []Fix{FixBrokenLinks}
+var implementedData = []Fix{FixBrokenLinks, FixEmptyFamilies}
 
 func dataInputs(t *testing.T) map[string][]byte {
 	in := subsetInputs(t)
 	in["data/broken"] = []byte(brokenGED)
+	in["data/empty"] = []byte(emptyGED)
 	return in
 }
 
@@ -371,4 +372,85 @@ func orphans(t *testing.T, data []byte) map[string]bool {
 		}
 	}
 	return set
+}
+
+// emptyGED: @F1@ and @F4@ are empty (F1 has only CHAN and RIN, and two
+// people link to it); @F2@ has an event of its own; @F3@ has a member; @F5@
+// is empty but an ASSO points to it, so removing it would break that link.
+const emptyGED = "0 HEAD\n1 GEDC\n2 VERS 5.5.1\n1 CHAR UTF-8\n1 SUBM @U1@\n0 @U1@ SUBM\n1 NAME Me\n" + // 1-7
+	"0 @I1@ INDI\n1 NAME Ann /Lund/\n1 FAMS @F1@\n2 NOTE first marriage\n1 FAMS @F3@\n" + // 8-12
+	"0 @I2@ INDI\n1 NAME Bo /Lund/\n1 FAMC @F1@\n2 PEDI birth\n1 ASSO @F5@\n2 RELA odd\n" + // 13-18
+	"0 @F1@ FAM\n1 CHAN\n2 DATE 1 JAN 2000\n1 RIN 5\n" + // 19-22
+	"0 @F2@ FAM\n1 MARR\n2 DATE 1900\n" + // 23-25
+	"0 @F3@ FAM\n1 HUSB @I1@\n" + // 26-27
+	"0 @F4@ FAM\n" + // 28
+	"0 @F5@ FAM\n" + // 29
+	"0 TRLR\n" // 30
+
+func TestEmptyFamilies(t *testing.T) {
+	res, err := RepairWithOptions([]byte(emptyGED), Options{Fixes: []Fix{FixEmptyFamilies}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Change{
+		{Line: 10, What: "removed a link to the removed family @F1@", Fix: FixEmptyFamilies, Removed: []string{"2 NOTE first marriage"}},
+		{Line: 15, What: "removed a link to the removed family @F1@", Fix: FixEmptyFamilies, Removed: []string{"2 PEDI birth"}},
+		{Line: 19, What: "removed an empty family @F1@", Fix: FixEmptyFamilies, Removed: []string{"1 CHAN", "2 DATE 1 JAN 2000", "1 RIN 5"}},
+		{Line: 28, What: "removed an empty family @F4@", Fix: FixEmptyFamilies},
+	}
+	if !reflect.DeepEqual(res.Changes, want) {
+		t.Errorf("Changes\n got  %+v\n want %+v", res.Changes, want)
+	}
+	for _, s := range []string{"0 @F2@ FAM\n1 MARR\n", "0 @F3@ FAM\n", "0 @F5@ FAM\n", "1 ASSO @F5@\n"} {
+		if !strings.Contains(string(res.Data), s) {
+			t.Errorf("%q removed", s)
+		}
+	}
+	if want := []FixInfo{{Fix: FixEmptyFamilies, Lines: 9, Kind: KindData}}; !reflect.DeepEqual(res.Applied, want) {
+		t.Errorf("Applied %+v", res.Applied)
+	}
+	if want := (FixInfo{Fix: FixEmptyFamilies, Lines: 9, Reason: "this family has its own information (events, notes or sources)", Kind: KindData}); !slices.Contains(res.Available, want) {
+		t.Errorf("Available %+v", res.Available)
+	}
+	if !slices.Equal(emptyFamilies(t, res.Data), []string{"@F2@", "@F5@"}) {
+		t.Errorf("EMPTY_FAMILY left for %v", emptyFamilies(t, res.Data))
+	}
+	if o := orphans(t, res.Data); len(o) != 0 {
+		t.Errorf("new broken links %v", o)
+	}
+	again, _ := RepairWithOptions(res.Data, Options{Fixes: []Fix{FixEmptyFamilies}})
+	if len(again.Changes) != 0 {
+		t.Errorf("second run %v", again.Changes)
+	}
+	assertDataContent(t, []byte(emptyGED), res, true)
+}
+
+// A file whose only memberless family has data: listed, not offered.
+func TestEmptyFamiliesNotOffered(t *testing.T) {
+	in := "0 HEAD\n1 GEDC\n2 VERS 5.5.1\n1 SUBM @U1@\n0 @U1@ SUBM\n1 NAME Me\n0 @F2@ FAM\n1 NOTE kept\n0 TRLR\n"
+	res, err := RepairWithOptions([]byte(in), Options{Fixes: []Fix{FixEmptyFamilies}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Changes) != 0 || len(res.Skipped) != 0 {
+		t.Errorf("Changes %v Skipped %v", res.Changes, res.Skipped)
+	}
+	want := FixInfo{Fix: FixEmptyFamilies, Reason: "this family has its own information (events, notes or sources)", Kind: KindData}
+	if !slices.Contains(res.Available, want) {
+		t.Errorf("Available %+v", res.Available)
+	}
+}
+
+func emptyFamilies(t *testing.T, data []byte) []string {
+	t.Helper()
+	opts := parser.DefaultOptions()
+	opts.Lenient = true
+	doc, _, _ := parser.ParseWithOptions(bytes.NewReader(data), opts)
+	var out []string
+	for _, e := range validator.Validate(doc) {
+		if e.Code == "EMPTY_FAMILY" {
+			out = append(out, e.Xref)
+		}
+	}
+	return out
 }
