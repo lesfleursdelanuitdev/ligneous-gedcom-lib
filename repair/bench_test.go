@@ -50,3 +50,44 @@ func BenchmarkRepairSubsetRaw(b *testing.B) {
 		}
 	}
 }
+
+// BenchmarkCheck is what the page runs to check a file: a lenient parse and
+// validation with date checks (leftCodes' work).
+func BenchmarkCheck(b *testing.B) {
+	raw := benchFile(b)
+	b.SetBytes(int64(len(raw)))
+	for i := 0; i < b.N; i++ {
+		leftCodes(raw)
+	}
+}
+
+// BenchmarkPreviewByRepair is the page's old preview: a repair with no fix.
+func BenchmarkPreviewByRepair(b *testing.B) {
+	raw := benchFile(b)
+	b.SetBytes(int64(len(raw)))
+	for i := 0; i < b.N; i++ {
+		if _, err := RepairWithOptions(raw, Options{Fixes: []Fix{}}); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkPlanNone(b *testing.B) {
+	raw := benchFile(b)
+	b.SetBytes(int64(len(raw)))
+	for i := 0; i < b.N; i++ {
+		if _, err := Plan(raw, Options{Fixes: []Fix{}}); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkPlanDefault(b *testing.B) {
+	raw := benchFile(b)
+	b.SetBytes(int64(len(raw)))
+	for i := 0; i < b.N; i++ {
+		if _, err := Plan(raw, Options{}); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

@@ -156,19 +156,22 @@ func isHead(s string) bool {
 
 // splitLines splits text like the parser's scanner: at "\r\n", "\n" or a
 // lone "\r", keeping each terminator.
-func splitLines(b []byte) []srcLine {
-	var out []srcLine
+func splitLines(data []byte) []srcLine {
+	// One string for the whole text; each line is a slice of it, so the
+	// lines cost no allocation of their own.
+	b := string(data)
+	out := make([]srcLine, 0, bytes.Count(data, []byte{'\n'})+1)
 	for len(b) > 0 {
-		i := bytes.IndexAny(b, "\r\n")
+		i := strings.IndexAny(b, "\r\n")
 		if i < 0 {
-			out = append(out, srcLine{string(b), ""})
+			out = append(out, srcLine{b, ""})
 			break
 		}
 		k := 1
 		if b[i] == '\r' && i+1 < len(b) && b[i+1] == '\n' {
 			k = 2
 		}
-		out = append(out, srcLine{string(b[:i]), string(b[i : i+k])})
+		out = append(out, srcLine{b[:i], b[i : i+k]})
 		b = b[i+k:]
 	}
 	return out
@@ -394,6 +397,9 @@ func cutPoint(v string, limit int) int {
 // guess the repaired header no longer shows. Stray bytes converted in a UTF-8 file are fixed, so they
 // leave nothing behind.
 func leftCodes(data []byte, extra ...string) []string {
+	if onLeftCodes != nil {
+		onLeftCodes()
+	}
 	set := map[string]bool{}
 	for _, c := range extra {
 		set[c] = true

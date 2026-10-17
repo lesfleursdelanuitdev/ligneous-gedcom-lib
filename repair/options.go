@@ -82,13 +82,14 @@ func Fixes() []Fix { return append([]Fix(nil), catalogue...) }
 
 // The reasons in FixInfo.
 const (
-	reasonUTF16       = "this file is UTF-16, so it has to be converted first"
-	reasonNeedsUTF8   = "needs the conversion to UTF-8"
-	reasonReadChange  = "skipped: it would change how the file is read"
-	reasonFamilyData  = "this family has its own information (events, notes or sources)"
-	reasonNeedsName   = "needs a name"
-	reasonNameLong    = "the name is too long (at most 120 characters)"
-	reasonNeedsBroken = "needs broken-links too"
+	reasonUTF16        = "this file is UTF-16, so it has to be converted first"
+	reasonNeedsUTF8    = "needs the conversion to UTF-8"
+	reasonReadChange   = "skipped: it would change how the file is read"
+	reasonFamilyData   = "this family has its own information (events, notes or sources)"
+	reasonNeedsName    = "needs a name"
+	reasonNameLong     = "the name is too long" // over 120 characters, or a NAME line over 255 bytes
+	reasonNeedsBroken  = "needs broken-links too"
+	reasonSomeFamilies = "some families need “Remove links to records that don't exist” too"
 )
 
 // rereadOK reports whether out, read again with its own encoding, is want.
@@ -120,6 +121,10 @@ type FixInfo struct {
 	// FixEncoding is chosen too ("needs the conversion to UTF-8").
 	Reason string `json:"reason,omitempty"`
 	Kind   string `json:"kind"` // KindFormat or KindData
+	// Needs lists other kinds this one depends on to do all it can, such as
+	// broken-links for empty-families when some families are empty only
+	// once broken links are removed.
+	Needs []Fix `json:"needs,omitempty"`
 }
 
 type fixSet map[Fix]bool
@@ -212,25 +217,33 @@ func RepairWithOptions(data []byte, opt Options) (*Result, error) {
 // there is nothing left for that kind to do there, and it is not skipped.
 func (a *analysis) report(res *Result, o *outcome, sel fixSet, avail []FixInfo, forced fixSet, fullTouched lineSets) {
 	res.Available = avail
-	for f, ls := range fullTouched {
-		if !sel[f] {
-			continue
-		}
-		for l := range ls {
-			if o.dataRemoved[l] {
-				o.touched.mark(f, l)
+	if len(o.dataRemoved) > 0 {
+		for f, ls := range fullTouched {
+			if !sel[f] {
+				continue
 			}
+			ls.each(func(l int) {
+				if o.dataRemoved[l] {
+					o.touched.mark(f, l)
+				}
+			})
 		}
 	}
 	res.Applied = []FixInfo{}
 	res.Skipped = []FixInfo{}
 	for _, f := range catalogue {
-		if k := len(o.touched[f]); k > 0 {
+		if k := o.touched.count(f); k > 0 {
 			res.Applied = append(res.Applied, FixInfo{Fix: f, Lines: k, Kind: kindOf(f)})
 		}
 	}
 	for _, av := range avail {
-		if !sel[av.Fix] || len(o.touched[av.Fix]) > 0 || av.Lines == 0 {
+		if !sel[av.Fix] || av.Lines == 0 {
+			continue
+		}
+		if k := o.touched.count(av.Fix); k > 0 {
+			if r := o.partial[av.Fix]; r != "" && k < av.Lines {
+				res.Skipped = append(res.Skipped, FixInfo{Fix: av.Fix, Lines: av.Lines - k, Reason: r, Kind: av.Kind})
+			}
 			continue
 		}
 		reason := reasonReadChange
@@ -315,6 +328,7 @@ type analysis struct {
 	// decoder finds (see parser scanChar); without the conversion none of
 	// them is removed or split.
 	charScanEnd int
+	nWS, nBlank int // lines with leading whitespace, blank lines (to size Changes)
 	facts       dataFacts
 }
 
@@ -358,6 +372,7 @@ func analyse(data []byte) (*analysis, error) {
 		t := a.src[i].text
 		if strings.TrimSpace(t) == "" {
 			a.blank[i] = true
+			a.nBlank++
 			continue
 		}
 		// Leading whitespace counts only on a GEDCOM line (level and tag);
@@ -371,6 +386,9 @@ func analyse(data []byte) (*analysis, error) {
 			continue
 		}
 		a.ws[i] = len(t) - len(s)
+		if a.ws[i] > 0 {
+			a.nWS++
+		}
 		a.clean[i] = s
 		anyNode = true
 		if nd.level == 0 {
@@ -446,14 +464,66 @@ func (a *analysis) scanEnd() int {
 	return n
 }
 
-// lineSets holds, per kind, the 1-based original lines it changed.
-type lineSets map[Fix]map[int]bool
+// lineSets holds, per kind, the 1-based original lines it changed (and a
+// few negative keys for added lines, which have no number of their own).
+type lineSets map[Fix]*lineSet
 
 func (s lineSets) mark(f Fix, line int) {
-	if s[f] == nil {
-		s[f] = map[int]bool{}
+	ls := s[f]
+	if ls == nil {
+		ls = &lineSet{}
+		s[f] = ls
 	}
-	s[f][line] = true
+	ls.add(line)
+}
+
+// count is the number of lines f changed.
+func (s lineSets) count(f Fix) int {
+	if ls := s[f]; ls != nil {
+		return ls.n
+	}
+	return 0
+}
+
+// lineSet is a set of line numbers: a bit per line, a map for the rest.
+type lineSet struct {
+	bits  []bool
+	other map[int]bool
+	n     int
+}
+
+func (s *lineSet) add(l int) {
+	if l >= 0 {
+		if l >= len(s.bits) {
+			grown := make([]bool, max(2*len(s.bits), l+1, 64))
+			copy(grown, s.bits)
+			s.bits = grown
+		}
+		if !s.bits[l] {
+			s.bits[l] = true
+			s.n++
+		}
+		return
+	}
+	if s.other == nil {
+		s.other = map[int]bool{}
+	}
+	if !s.other[l] {
+		s.other[l] = true
+		s.n++
+	}
+}
+
+// each calls fn for every line in s.
+func (s *lineSet) each(fn func(int)) {
+	for l, ok := range s.bits {
+		if ok {
+			fn(l)
+		}
+	}
+	for l := range s.other {
+		fn(l)
+	}
 }
 
 // plan is what one run does to each line.
@@ -492,12 +562,29 @@ type outcome struct {
 	skipReason map[Fix]string
 	// dataRemoved holds the 1-based lines the data kinds removed.
 	dataRemoved map[int]bool
+	// partial: a chosen kind that did part of its work, and why not the rest.
+	partial map[Fix]string
+	// The submitter's added lines, for Plan.
+	subPointer string
+	subRecord  []string
 }
 
 // plan decides what the fixes in sel do, without writing anything.
-func (a *analysis) plan(sel fixSet, name string) *outcome {
+func (a *analysis) plan(sel fixSet, name string) *outcome { return a.planWith(sel, name, false) }
+
+// planWith is plan; with dataOnly it stops after the data kinds (for
+// Plan's preview of a data kind, which the format kinds cannot change).
+func (a *analysis) planWith(sel fixSet, name string, dataOnly bool) *outcome {
 	conv := sel[FixEncoding]
-	o := &outcome{conv: conv, touched: lineSets{}, changes: []Change{}, skipReason: map[Fix]string{}, dataRemoved: map[int]bool{}}
+	o := &outcome{conv: conv, touched: lineSets{}, skipReason: map[Fix]string{}, partial: map[Fix]string{}, dataRemoved: map[int]bool{}}
+	est := len(a.fixes) + 16
+	if sel[FixBlankLines] {
+		est += a.nBlank
+	}
+	if sel[FixLeadingSpace] {
+		est += a.nWS
+	}
+	o.changes = make([]Change, 0, est)
 	if !conv && a.raw == nil {
 		o.none = true
 		return o
@@ -573,6 +660,11 @@ func (a *analysis) plan(sel fixSet, name string) *outcome {
 	// The data kinds come first, so the format kinds see the final lines.
 	// p.removed marks every line they remove.
 	a.planData(sel, name, o, &p, guard, add)
+	if dataOnly {
+		o.p = p
+		sort.SliceStable(o.changes, func(x, y int) bool { return o.changes[x].Line < o.changes[y].Line })
+		return o
+	}
 
 	for i := a.head; i < n; i++ {
 		if p.removed[i] {
@@ -710,6 +802,9 @@ func (p *plan) text(lines []srcLine, ws []int, i int) string {
 
 // emit writes lines with the plan applied.
 func (p *plan) emit(lines []srcLine, ws []int, head int, raw bool) []byte {
+	if onEmit != nil {
+		onEmit()
+	}
 	out := make([]outLine, 0, len(lines)+2)
 	ins := func(ls []insLine) {
 		for _, l := range ls {
@@ -796,7 +891,7 @@ func (a *analysis) rawStripOK(i int) bool {
 func (a *analysis) available(touched lineSets) []FixInfo {
 	out := []FixInfo{}
 	for _, f := range catalogue {
-		info := FixInfo{Fix: f, Lines: len(touched[f]), Kind: kindOf(f)}
+		info := FixInfo{Fix: f, Lines: touched.count(f), Kind: kindOf(f)}
 		if info.Kind == KindData {
 			info.Lines = a.dataLines(f)
 		}
@@ -818,6 +913,9 @@ func (a *analysis) available(touched lineSets) []FixInfo {
 				info.Reason = reasonNeedsUTF8
 			}
 		case FixEmptyFamilies:
+			if len(a.facts.familiesWithBroken) > len(a.facts.families) {
+				info.Needs = []Fix{FixBrokenLinks}
+			}
 			if a.facts.famWithData {
 				info.Reason = reasonFamilyData
 			}

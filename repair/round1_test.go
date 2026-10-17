@@ -51,7 +51,7 @@ func TestProbesKeepTheSafeFixes(t *testing.T) {
 				t.Errorf("Changes %+v", res.Changes)
 			}
 			want := FixInfo{Fix: FixBlankLines, Lines: len(touchedBlank(raw)), Reason: reasonReadChange, Kind: KindFormat}
-			if !slices.Contains(res.Skipped, want) {
+			if !containsInfo(res.Skipped, want) {
 				t.Errorf("Skipped %+v, want %+v in it", res.Skipped, want)
 			}
 		})
@@ -85,7 +85,7 @@ func TestRereadRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertChanges(t, res.Changes, []lw{{11, "added the end-of-file marker (0 TRLR)"}})
-	wantSkipped := []FixInfo{{FixBlankLines, 2, false, reasonReadChange, kindOf(FixBlankLines)}, {FixLeadingSpace, 3, false, reasonReadChange, kindOf(FixLeadingSpace)}}
+	wantSkipped := []FixInfo{{FixBlankLines, 2, false, reasonReadChange, kindOf(FixBlankLines), nil}, {FixLeadingSpace, 3, false, reasonReadChange, kindOf(FixLeadingSpace), nil}}
 	if !reflect.DeepEqual(res.Skipped, wantSkipped) {
 		t.Errorf("Skipped %+v", res.Skipped)
 	}
@@ -98,7 +98,7 @@ func TestRereadRetry(t *testing.T) {
 	if !bytes.Equal(res.Data, raw) || len(res.Changes) != 0 || len(res.Applied) != 0 {
 		t.Errorf("Changes %v Applied %v", res.Changes, res.Applied)
 	}
-	wantSkipped = append(wantSkipped, FixInfo{FixTrailer, 1, false, reasonReadChange, kindOf(FixTrailer)})
+	wantSkipped = append(wantSkipped, FixInfo{FixTrailer, 1, false, reasonReadChange, kindOf(FixTrailer), nil})
 	if !reflect.DeepEqual(res.Skipped, wantSkipped) {
 		t.Errorf("Skipped %+v", res.Skipped)
 	}
@@ -133,15 +133,18 @@ func TestChosenKindsAreAppliedOrSkipped(t *testing.T) {
 				// A kind may be applied with no Change of its own when its
 				// lines went with a unit a data kind removed (broken links in
 				// a removed family, a blank line in a removed link).
-				withFamily := len(lines[FixEmptyFamilies])+len(lines[FixBrokenLinks]) > 0 && (a.Fix == FixBrokenLinks || kindOf(a.Fix) == KindFormat)
-				if a.Lines <= 0 || !slices.Contains(sel.fixes, a.Fix) || (len(lines[a.Fix]) == 0 && !withFamily) {
+				withFamily := lines.count(FixEmptyFamilies)+lines.count(FixBrokenLinks) > 0 && (a.Fix == FixBrokenLinks || kindOf(a.Fix) == KindFormat)
+				if a.Lines <= 0 || !slices.Contains(sel.fixes, a.Fix) || (lines.count(a.Fix) == 0 && !withFamily) {
 					t.Errorf("%s/%s: Applied %+v", name, sel.name, a)
 				}
 			}
 			skipped := map[Fix]string{}
 			for _, s := range res.Skipped {
 				skipped[s.Fix] = s.Reason
-				if s.Reason == "" || !slices.Contains(sel.fixes, s.Fix) || applied[s.Fix] > 0 {
+				// A kind may be in both lists only when it did part of its
+				// work and the rest needs broken-links.
+				partial := applied[s.Fix] > 0 && s.Reason == reasonSomeFamilies
+				if s.Reason == "" || !slices.Contains(sel.fixes, s.Fix) || (applied[s.Fix] > 0 && !partial) {
 					t.Errorf("%s/%s: Skipped %+v", name, sel.name, s)
 				}
 				checkSkipReason(t, name+"/"+sel.name, raw, sel.fixes, s)
@@ -173,16 +176,16 @@ func TestAppliedCounts(t *testing.T) {
 	if want := []FixInfo{{Fix: FixLeadingSpace, Lines: 1, Kind: KindFormat}}; !reflect.DeepEqual(res.Applied, want) {
 		t.Errorf("Applied %+v", res.Applied)
 	}
-	if want := []FixInfo{{FixBlankLines, 1, false, reasonReadChange, kindOf(FixBlankLines)}}; !reflect.DeepEqual(res.Skipped, want) {
+	if want := []FixInfo{{FixBlankLines, 1, false, reasonReadChange, kindOf(FixBlankLines), nil}}; !reflect.DeepEqual(res.Skipped, want) {
 		t.Errorf("Skipped %+v", res.Skipped)
 	}
 	// Skipped for want of the conversion.
 	res, _ = RepairWithOptions(anselLong(), Options{Fixes: []Fix{FixLongLines}})
-	if want := []FixInfo{{FixLongLines, 1, false, reasonNeedsUTF8, kindOf(FixLongLines)}}; !reflect.DeepEqual(res.Skipped, want) {
+	if want := []FixInfo{{FixLongLines, 1, false, reasonNeedsUTF8, kindOf(FixLongLines), nil}}; !reflect.DeepEqual(res.Skipped, want) {
 		t.Errorf("Skipped %+v", res.Skipped)
 	}
 	res, _ = RepairWithOptions(utf16Messy(), Options{Fixes: []Fix{FixBlankLines, FixTrailer}})
-	if want := []FixInfo{{FixBlankLines, 1, false, reasonNeedsUTF8, kindOf(FixBlankLines)}, {FixTrailer, 1, false, reasonNeedsUTF8, kindOf(FixTrailer)}}; !reflect.DeepEqual(res.Skipped, want) {
+	if want := []FixInfo{{FixBlankLines, 1, false, reasonNeedsUTF8, kindOf(FixBlankLines), nil}, {FixTrailer, 1, false, reasonNeedsUTF8, kindOf(FixTrailer), nil}}; !reflect.DeepEqual(res.Skipped, want) {
 		t.Errorf("Skipped %+v", res.Skipped)
 	}
 }
@@ -237,7 +240,7 @@ func checkSkipReason(t *testing.T, what string, raw []byte, fixes []Fix, s FixIn
 	switch s.Reason {
 	case reasonReadChange, reasonNeedsUTF8:
 		need = FixEncoding
-	case reasonNeedsBroken:
+	case reasonNeedsBroken, reasonSomeFamilies:
 		need = FixBrokenLinks
 	case reasonNeedsName, reasonNameLong:
 		if s.Fix != FixSubmitter {
@@ -257,7 +260,7 @@ func checkSkipReason(t *testing.T, what string, raw []byte, fixes []Fix, s FixIn
 		t.Fatal(err)
 	}
 	for _, a := range res.Applied {
-		if a.Fix == s.Fix {
+		if a.Fix == s.Fix && a.Lines >= s.Lines {
 			return
 		}
 	}

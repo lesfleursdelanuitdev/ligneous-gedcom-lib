@@ -41,13 +41,13 @@ type dataFacts struct {
 	// familiesWithBroken: empty once broken links are gone (broken-links
 	// chosen too). Available counts these.
 	familiesWithBroken []emptyFamily
-	famWithData        bool         // no family can go, and a memberless one has data of its own
-	emptySubm          int          // an empty "1 SUBM" line in HEAD, or -1
-	brokenLine         map[int]bool // every line of a broken-link unit
-	missingSubm        bool         // HEADER_MISSING_SUBM
-	subAfter           int          // the HEAD SUBM line goes after this line
-	trlr               int          // the first 0 TRLR line, or -1
-	tokens             map[string]bool
+	famWithData        bool           // no family can go, and a memberless one has data of its own
+	emptySubm          int            // an empty "1 SUBM" line in HEAD, or -1
+	brokenLine         map[int]bool   // every line of a broken-link unit
+	missingSubm        bool           // HEADER_MISSING_SUBM
+	subAfter           int            // the HEAD SUBM line goes after this line
+	trlr               int            // the first 0 TRLR line, or -1
+	defined            map[string]int // level-0 xrefs, with how often each is defined
 }
 
 // isPointer reports whether v (trimmed) is an xref pointer: "@X@", with no
@@ -117,22 +117,18 @@ func (a *analysis) analyseData() {
 	d := &a.facts
 	d.trlr = -1
 	d.emptySubm = -1
-	d.tokens = map[string]bool{}
 	d.brokenLine = map[int]bool{}
 	defined := map[string]int{}
+	d.defined = defined
 	for i, nd := range a.nodes {
-		if !nd.ok {
+		if !nd.ok || nd.level != 0 {
 			continue
 		}
-		if nd.level == 0 && nd.xref != "" {
+		if nd.xref != "" {
 			defined[nd.xref]++
-			d.tokens[nd.xref] = true
 		}
-		if nd.level == 0 && nd.tag == "TRLR" && d.trlr < 0 {
+		if nd.tag == "TRLR" && d.trlr < 0 {
 			d.trlr = i
-		}
-		if v, ok := a.xrefLike(i); ok {
-			d.tokens[v] = true
 		}
 	}
 	top := func(i int) int { // the level-0 line above i
@@ -170,10 +166,29 @@ func (a *analysis) analyseData() {
 
 	// Empty families: no members and no data of their own; every pointer
 	// to them is a FAMS or FAMC line of a person (removed with them).
+	// The lines pointing to a memberless family (any tag but CONT/CONC):
+	// only those families can go, so only their pointers are collected.
 	pointers := map[string][]int{}
-	for i := range a.nodes {
-		if v, ok := a.xrefLike(i); ok {
-			pointers[v] = append(pointers[v], i)
+	for _, nd := range a.nodes {
+		if !nd.ok || nd.level != 0 || nd.tag != "FAM" || nd.xref == "" {
+			continue
+		}
+		members := false
+		for _, c := range nd.children {
+			t := a.nodes[c].tag
+			members = members || (t == "HUSB" || t == "WIFE" || t == "CHIL") && !brokenAt[c]
+		}
+		if !members {
+			pointers[nd.xref] = nil
+		}
+	}
+	if len(pointers) > 0 {
+		for i := range a.nodes {
+			if v, ok := a.xrefLike(i); ok {
+				if list, want := pointers[v]; want {
+					pointers[v] = append(list, i)
+				}
+			}
 		}
 	}
 	// classify finds the empty families. With ignoreBroken, a broken link
@@ -326,7 +341,8 @@ func (a *analysis) planData(sel fixSet, name string, o *outcome, p *plan, guard 
 		if sel[FixBrokenLinks] {
 			fams = a.facts.familiesWithBroken
 		} else if len(a.facts.familiesWithBroken) > len(fams) {
-			o.skipReason[FixEmptyFamilies] = reasonNeedsBroken
+			o.skipReason[FixEmptyFamilies] = reasonNeedsBroken // none can go alone
+			o.partial[FixEmptyFamilies] = reasonSomeFamilies   // some can
 		}
 		for _, fam := range fams {
 			ok := canDrop(fam.unit)
@@ -433,7 +449,7 @@ func (a *analysis) planSubmitter(name string, o *outcome, p *plan) {
 	}
 	xref := ""
 	for k := 1; xref == ""; k++ {
-		if x := "@SUBM" + strconv.Itoa(k) + "@"; !a.facts.tokens[x] {
+		if x := "@SUBM" + strconv.Itoa(k) + "@"; !a.xrefInUse(x) {
 			xref = x
 		}
 	}
@@ -455,10 +471,25 @@ func (a *analysis) planSubmitter(name string, o *outcome, p *plan) {
 	} else {
 		p.appendEnd = append(p.appendEnd, rec...)
 	}
+	o.subPointer, o.subRecord = "1 SUBM "+xref, []string{rec[0].dec, rec[1].dec}
 	o.changes = append(o.changes,
 		Change{Line: pointerLine, What: fmt.Sprintf("added you as the person who made this file (%s)", name), Fix: FixSubmitter},
 		Change{Line: recLine, What: "added a submitter record for " + name, Fix: FixSubmitter})
 	for k := -2; k >= -3; k-- { // the record's two added lines, with no line number of their own
 		o.touched.mark(FixSubmitter, k)
 	}
+}
+
+// xrefInUse reports whether x is a level-0 xref or the value of a line (any
+// tag but CONT/CONC) of the file: a new record must not take it.
+func (a *analysis) xrefInUse(x string) bool {
+	if a.facts.defined[x] > 0 {
+		return true
+	}
+	for i := range a.nodes {
+		if v, ok := a.xrefLike(i); ok && v == x {
+			return true
+		}
+	}
+	return false
 }

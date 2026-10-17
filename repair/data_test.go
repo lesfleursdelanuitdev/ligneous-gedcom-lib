@@ -318,6 +318,7 @@ func dataInputs(t *testing.T) map[string][]byte {
 	in["data/broken-families"] = []byte(brokenFamGED)
 	in["data/blank-unit"] = []byte(blankUnitGED)
 	in["data/empty-subm"] = []byte(emptySubmGED)
+	in["data/partial-families"] = []byte(partialFamGED)
 	for name, c := range brokenInsideFamily {
 		in["data/inside-family/"+name] = []byte(c.in)
 	}
@@ -435,7 +436,7 @@ func TestEmptyFamilies(t *testing.T) {
 	if want := []FixInfo{{Fix: FixEmptyFamilies, Lines: 9, Kind: KindData}}; !reflect.DeepEqual(res.Applied, want) {
 		t.Errorf("Applied %+v", res.Applied)
 	}
-	if want := (FixInfo{Fix: FixEmptyFamilies, Lines: 9, Kind: KindData}); !slices.Contains(res.Available, want) {
+	if want := (FixInfo{Fix: FixEmptyFamilies, Lines: 9, Kind: KindData}); !containsInfo(res.Available, want) {
 		t.Errorf("Available %+v", res.Available)
 	}
 	if !slices.Equal(emptyFamilies(t, res.Data), []string{"@F2@", "@F5@"}) {
@@ -462,7 +463,7 @@ func TestEmptyFamiliesNotOffered(t *testing.T) {
 		t.Errorf("Changes %v Skipped %v", res.Changes, res.Skipped)
 	}
 	want := FixInfo{Fix: FixEmptyFamilies, Reason: "this family has its own information (events, notes or sources)", Kind: KindData}
-	if !slices.Contains(res.Available, want) {
+	if !containsInfo(res.Available, want) {
 		t.Errorf("Available %+v", res.Available)
 	}
 }
@@ -505,7 +506,7 @@ func TestSubmitter(t *testing.T) {
 	if want := []FixInfo{{Fix: FixSubmitter, Lines: 3, Kind: KindData}}; !reflect.DeepEqual(res.Applied, want) {
 		t.Errorf("Applied %+v", res.Applied)
 	}
-	if !slices.Contains(res.Available, FixInfo{Fix: FixSubmitter, Lines: 3, Kind: KindData}) {
+	if !containsInfo(res.Available, FixInfo{Fix: FixSubmitter, Lines: 3, Kind: KindData}) {
 		t.Errorf("Available %+v", res.Available)
 	}
 	if validatorCodes(t, res.Data)["HEADER_MISSING_SUBM"] {
@@ -532,13 +533,14 @@ func TestSubmitterSkipped(t *testing.T) {
 		in, name, reason string
 		fixes            []Fix
 	}{
-		"empty name":           {submGED, " \t\x07 ", "needs a name", nil},
-		"too long":             {submGED, long, "the name is too long (at most 120 characters)", nil},
-		"ANSEL, accented name": {"0 HEAD\n1 GEDC\n2 VERS 5.5.1\n1 CHAR ANSEL\n0 TRLR\n", "René", "needs the conversion to UTF-8", nil},
-		"ASCII, accented name": {"0 HEAD\n1 GEDC\n2 VERS 5.5.1\n1 CHAR ASCII\n0 TRLR\n", "René", "needs the conversion to UTF-8", nil},
-		"1252, not in 1252":    {"0 HEAD\n1 GEDC\n2 VERS 5.5.1\n1 CHAR ANSI\n0 @I1@ INDI\n1 NAME Ren\xE9\n0 TRLR\n", "李", "needs the conversion to UTF-8", nil},
-		"UTF-16 not converted": {string(utf16Of("0 HEAD\r\n1 GEDC\r\n2 VERS 5.5.1\r\n1 CHAR UNICODE\r\n0 TRLR\r\n")), "Mona", "needs the conversion to UTF-8", nil},
-		"ANSEL, encoding off ": {"0 HEAD\n1 GEDC\n2 VERS 5.5.1\n1 CHAR ANSEL\n0 TRLR\n", "李", "needs the conversion to UTF-8", []Fix{FixSubmitter, FixTrailer}},
+		"empty name":               {submGED, " \t\x07 ", "needs a name", nil},
+		"too long":                 {submGED, long, "the name is too long", nil},
+		"short but over 248 bytes": {submGED, strings.Repeat("李", 90), "the name is too long", nil}, // 90 characters, 270 bytes
+		"ANSEL, accented name":     {"0 HEAD\n1 GEDC\n2 VERS 5.5.1\n1 CHAR ANSEL\n0 TRLR\n", "René", "needs the conversion to UTF-8", nil},
+		"ASCII, accented name":     {"0 HEAD\n1 GEDC\n2 VERS 5.5.1\n1 CHAR ASCII\n0 TRLR\n", "René", "needs the conversion to UTF-8", nil},
+		"1252, not in 1252":        {"0 HEAD\n1 GEDC\n2 VERS 5.5.1\n1 CHAR ANSI\n0 @I1@ INDI\n1 NAME Ren\xE9\n0 TRLR\n", "李", "needs the conversion to UTF-8", nil},
+		"UTF-16 not converted":     {string(utf16Of("0 HEAD\r\n1 GEDC\r\n2 VERS 5.5.1\r\n1 CHAR UNICODE\r\n0 TRLR\r\n")), "Mona", "needs the conversion to UTF-8", nil},
+		"ANSEL, encoding off ":     {"0 HEAD\n1 GEDC\n2 VERS 5.5.1\n1 CHAR ANSEL\n0 TRLR\n", "李", "needs the conversion to UTF-8", []Fix{FixSubmitter, FixTrailer}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			fixes := c.fixes

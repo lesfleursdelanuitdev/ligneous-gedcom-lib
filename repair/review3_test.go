@@ -2,7 +2,6 @@ package repair
 
 import (
 	"reflect"
-	"slices"
 	"strings"
 	"testing"
 )
@@ -123,7 +122,7 @@ func TestBrokenLinksThenEmptyFamiliesInOneRun(t *testing.T) {
 // "has its own information" only when no family qualifies.
 func TestEmptyFamiliesReasonOnlyWhenNoneQualifies(t *testing.T) {
 	res, _ := RepairWithOptions([]byte(emptyGED), Options{Fixes: []Fix{FixEmptyFamilies}})
-	if !slices.Contains(res.Available, FixInfo{Fix: FixEmptyFamilies, Lines: 9, Kind: KindData}) {
+	if !containsInfo(res.Available, FixInfo{Fix: FixEmptyFamilies, Lines: 9, Kind: KindData}) {
 		t.Errorf("Available %+v", res.Available)
 	}
 }
