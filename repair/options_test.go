@@ -258,6 +258,7 @@ func TestAvailable(t *testing.T) {
 			{FixBlankLines, 2, false, "", kindOf(FixBlankLines)},
 			{FixLeadingSpace, 3, false, "", kindOf(FixLeadingSpace)},
 			{FixTrailer, 1, false, "", kindOf(FixTrailer)},
+			{FixSubmitter, 3, false, "", KindData}, // 5.5.1 and no SUBM in HEAD
 		}},
 		{"ansel long", anselLong(), []FixInfo{
 			{FixEncoding, 2, false, "", kindOf(FixEncoding)},

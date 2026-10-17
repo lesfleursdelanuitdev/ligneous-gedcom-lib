@@ -2,7 +2,12 @@ package repair
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
+
+	"golang.org/x/text/encoding/charmap"
 )
 
 // The data kinds. Unlike the format kinds they change what the file says,
@@ -107,6 +112,12 @@ func (a *analysis) analyseData() {
 		if !isPointer(v) || defined[v] > 0 || a.nodes[top(i)].level != 0 {
 			continue
 		}
+		if t := top(i); a.nodes[t].tag == "HEAD" && (nd.tag == "SUBM" || nd.tag == "SUBN") {
+			// Removing it would leave the header without a submitter
+			// (HEADER_MISSING_SUBM), which the validator does not report
+			// for a broken one; it stays.
+			continue
+		}
 		u := unit{i, lastDescendant(a.nodes, i)}
 		d.broken = append(d.broken, brokenLink{u, pointerKind(nd.tag), v})
 		end = u.end
@@ -157,6 +168,27 @@ func (a *analysis) analyseData() {
 		}
 	}
 
+	// Submitter: offered when the validator reports HEADER_MISSING_SUBM.
+	if a.hasHead {
+		ver, subm := "", false
+		for _, c := range a.nodes[a.head].children {
+			switch a.nodes[c].tag {
+			case "GEDC":
+				for _, g := range a.nodes[c].children {
+					if a.nodes[g].tag == "VERS" && ver == "" {
+						ver = strings.TrimSpace(value(a.clean[g], a.nodes[g]))
+					}
+				}
+			case "SUBM":
+				subm = subm || strings.TrimSpace(value(a.clean[c], a.nodes[c])) != ""
+			}
+		}
+		d.missingSubm = (ver == "5.5" || ver == "5.5.1") && !subm
+		d.subAfter = lastDescendant(a.nodes, a.head)
+		if a.charLine >= 0 {
+			d.subAfter = lastDescendant(a.nodes, a.charLine)
+		}
+	}
 }
 
 // dataLines is the Available line count of a data kind: the lines it
@@ -174,6 +206,10 @@ func (a *analysis) dataLines(f Fix) int {
 			for _, l := range fam.links {
 				n += l.size()
 			}
+		}
+	case FixSubmitter:
+		if a.facts.missingSubm {
+			n = 3
 		}
 	}
 	return n
@@ -232,5 +268,94 @@ func (a *analysis) planData(sel fixSet, name string, o *outcome, p *plan, guard 
 			}
 			drop(b.unit, fmt.Sprintf("removed a link to %s %s, which doesn't exist", b.kind, b.xref), FixBrokenLinks, true)
 		}
+	}
+	if sel[FixSubmitter] && a.facts.missingSubm {
+		a.planSubmitter(name, o, p)
+	}
+}
+
+// cleanName is the name with control characters removed and trimmed.
+func cleanName(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, s)
+	return strings.TrimSpace(s)
+}
+
+// encodeName writes name in the output encoding, or reports false.
+func (a *analysis) encodeName(name string, conv bool) (string, bool) {
+	if conv || a.detected == "UTF-8" {
+		return name, true
+	}
+	ascii := true
+	for i := 0; i < len(name); i++ {
+		ascii = ascii && name[i] < utf8.RuneSelf
+	}
+	if ascii {
+		return name, true
+	}
+	var cm *charmap.Charmap
+	switch a.detected {
+	case "Windows-1252":
+		cm = charmap.Windows1252
+	case "CP437":
+		cm = charmap.CodePage437
+	case "MacRoman":
+		cm = charmap.Macintosh
+	default: // ASCII, ANSEL: ASCII names only
+		return "", false
+	}
+	out, err := cm.NewEncoder().String(name)
+	if err != nil {
+		return "", false
+	}
+	return out, true
+}
+
+// planSubmitter adds "1 SUBM @SUBMn@" to HEAD (after CHAR, or at the end
+// of HEAD) and "0 @SUBMn@ SUBM" / "1 NAME name" before the trailer.
+func (a *analysis) planSubmitter(name string, o *outcome, p *plan) {
+	name = cleanName(name)
+	if name == "" {
+		o.skipReason[FixSubmitter] = reasonNeedsName
+		return
+	}
+	if utf8.RuneCountInString(name) > 120 {
+		o.skipReason[FixSubmitter] = reasonNameLong
+		return
+	}
+	raw, ok := a.encodeName(name, o.conv)
+	if !ok {
+		o.skipReason[FixSubmitter] = reasonNeedsUTF8
+		return
+	}
+	if len("1 NAME ")+len(raw) > maxLine || len("1 NAME ")+len(name) > maxLine {
+		o.skipReason[FixSubmitter] = reasonNameLong
+		return
+	}
+	xref := ""
+	for k := 1; xref == ""; k++ {
+		if x := "@SUBM" + strconv.Itoa(k) + "@"; !a.facts.tokens[x] {
+			xref = x
+		}
+	}
+	d := a.facts
+	p.insertAfter[d.subAfter] = append(p.insertAfter[d.subAfter], insLine{"1 SUBM " + xref, "1 SUBM " + xref})
+	rec := []insLine{{"0 " + xref + " SUBM", "0 " + xref + " SUBM"}, {"1 NAME " + raw, "1 NAME " + name}}
+	recLine := len(a.src) + 1
+	if d.trlr >= 0 {
+		p.insertBefore[d.trlr] = append(p.insertBefore[d.trlr], rec...)
+		recLine = d.trlr + 1
+	} else {
+		p.appendEnd = append(p.appendEnd, rec...)
+	}
+	o.changes = append(o.changes,
+		Change{Line: a.head + 1, What: fmt.Sprintf("added you as the person who made this file (%s)", name), Fix: FixSubmitter},
+		Change{Line: recLine, What: "added a submitter record for " + name, Fix: FixSubmitter})
+	for k := -1; k >= -3; k-- { // three added lines, with no line number of their own
+		o.touched.mark(FixSubmitter, k)
 	}
 }

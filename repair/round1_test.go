@@ -107,14 +107,15 @@ func TestRereadRetry(t *testing.T) {
 // Every chosen kind the file could use either changes something or is in
 // Skipped with a reason. Applied counts what really changed.
 func TestChosenKindsAreAppliedOrSkipped(t *testing.T) {
-	inputs := subsetInputs(t)
+	inputs := dataInputs(t)
 	for _, name := range sortedNames(inputs) {
 		raw := inputs[name]
 		if _, err := Repair(raw); err != nil {
 			continue
 		}
-		for _, sel := range append(selections(), selection{"all", allFixes}, selection{"none", []Fix{}}) {
-			res, err := RepairWithOptions(raw, Options{Fixes: sel.fixes})
+		sels := append(selections(), selection{"all", allFixes}, selection{"none", []Fix{}})
+		for _, sel := range append(sels, dataSelections(implementedData)...) {
+			res, err := RepairWithOptions(raw, Options{Fixes: sel.fixes, SubmitterName: "Test Person"})
 			if err != nil {
 				t.Fatal(err)
 			}
