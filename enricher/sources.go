@@ -26,11 +26,11 @@ func (e *enricherState) extractSources(ed *EnrichedDocument) {
 		idx := len(ed.Sources)
 		ed.Sources = append(ed.Sources, EnrichedSource{
 			Xref:           srcRec.Xref,
-			Title:          srcRec.ChildValue("TITL"),
-			Author:         srcRec.ChildValue("AUTH"),
-			Abbreviation:   srcRec.ChildValue("ABBR"),
-			Publication:    srcRec.ChildValue("PUBL"),
-			Text:           srcRec.ChildValue("TEXT"),
+			Title:          childText(&srcRec, "TITL"),
+			Author:         childText(&srcRec, "AUTH"),
+			Abbreviation:   childText(&srcRec, "ABBR"),
+			Publication:    childText(&srcRec, "PUBL"),
+			Text:           childText(&srcRec, "TEXT"),
 			RepositoryXref: repoXref,
 			CallNumber:     callNumber,
 		})
@@ -102,7 +102,7 @@ func (e *enricherState) extractRecordSources(ed *EnrichedDocument, rec gedcom.Ge
 			continue
 		}
 
-		page := sourChild.ChildValue("PAGE")
+		page := childText(&sourChild, "PAGE")
 		qualityStr := childTrimmed(&sourChild, "QUAY")
 		quality := 0
 		if q, err := strconv.Atoi(qualityStr); err == nil {
@@ -111,9 +111,30 @@ func (e *enricherState) extractRecordSources(ed *EnrichedDocument, rec gedcom.Ge
 
 		citation := ""
 		if dataRec := sourChild.FirstChildByTag("DATA"); dataRec != nil {
-			citation = dataRec.ChildValue("TEXT")
+			citation = childText(dataRec, "TEXT")
 		}
 
 		linkFn(srcIdx, page, quality, citation)
 	}
+}
+
+// childText returns the value of rec's first child with tag, with that
+// child's CONC lines joined verbatim and its CONT lines joined with "\n", in
+// file order. It is for the text tags of sources and citations (TITL, AUTH,
+// ABBR, PUBL, TEXT, PAGE), so a value split across lines reads whole.
+func childText(rec *gedcom.GedcomRecord, tag string) string {
+	child := rec.FirstChildByTag(tag)
+	if child == nil {
+		return ""
+	}
+	v := child.Value
+	for _, c := range child.Children {
+		switch c.Tag {
+		case "CONC":
+			v += c.Value
+		case "CONT":
+			v += "\n" + c.Value
+		}
+	}
+	return v
 }
