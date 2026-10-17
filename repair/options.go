@@ -35,11 +35,46 @@ const (
 	FixLongLines Fix = "long-lines"
 	// FixTrailer adds "0 TRLR" when the file has none.
 	FixTrailer Fix = "trailer"
+
+	// The data kinds change the family data, so they run only when named
+	// in Options.Fixes.
+
+	// FixBrokenLinks removes pointer lines whose target record is not in the
+	// file, with the lines nested under them.
+	FixBrokenLinks Fix = "broken-links"
+	// FixEmptyFamilies removes FAM records with no members and no data of
+	// their own, and the FAMS/FAMC links to them.
+	FixEmptyFamilies Fix = "empty-families"
+	// FixSubmitter adds a submitter (Options.SubmitterName) when the header
+	// has none.
+	FixSubmitter Fix = "submitter"
 )
 
-var catalogue = []Fix{FixEncoding, FixBOM, FixLineEndings, FixBlankLines, FixLeadingSpace, FixLongLines, FixTrailer}
+// FixInfo.Kind values.
+const (
+	KindFormat = "format" // changes how the file is written, never what it says
+	KindData   = "data"   // changes the family data; never chosen by default
+)
 
-// Fixes returns every kind of repair, in catalogue order.
+var dataKinds = []Fix{FixBrokenLinks, FixEmptyFamilies, FixSubmitter}
+
+// kindOf is KindData for the data kinds and KindFormat for the others.
+func kindOf(f Fix) string {
+	for _, d := range dataKinds {
+		if d == f {
+			return KindData
+		}
+	}
+	return KindFormat
+}
+
+var formatKinds = []Fix{FixEncoding, FixBOM, FixLineEndings, FixBlankLines, FixLeadingSpace, FixLongLines, FixTrailer}
+
+// catalogue is every kind, format kinds first.
+var catalogue = append(append([]Fix(nil), formatKinds...), dataKinds...)
+
+// Fixes returns every kind of repair, in catalogue order: the format kinds,
+// then the data kinds.
 func Fixes() []Fix { return append([]Fix(nil), catalogue...) }
 
 // The reasons in FixInfo.
@@ -47,6 +82,9 @@ const (
 	reasonUTF16      = "this file is UTF-16, so it has to be converted first"
 	reasonNeedsUTF8  = "needs the conversion to UTF-8"
 	reasonReadChange = "skipped: it would change how the file is read"
+	reasonFamilyData = "this family has its own information (events, notes or sources)"
+	reasonNeedsName  = "needs a name"
+	reasonNameLong   = "the name is too long (at most 120 characters)"
 )
 
 // rereadOK reports whether out, read again with its own encoding, is want.
@@ -61,6 +99,8 @@ var rereadOK = func(out, want []byte) bool {
 // "fixes": []) means none.
 type Options struct {
 	Fixes []Fix `json:"fixes"`
+	// SubmitterName is the name FixSubmitter writes.
+	SubmitterName string `json:"submitterName,omitempty"`
 }
 
 // FixInfo describes a kind of repair the file could use, whether or not it
@@ -75,6 +115,7 @@ type FixInfo struct {
 	// Reason says why the fix is required, or why it is skipped unless
 	// FixEncoding is chosen too ("needs the conversion to UTF-8").
 	Reason string `json:"reason,omitempty"`
+	Kind   string `json:"kind"` // KindFormat or KindData
 }
 
 type fixSet map[Fix]bool
@@ -125,14 +166,14 @@ func RepairWithOptions(data []byte, opt Options) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	full := a.plan(everyFix())
+	full := a.plan(formatFixes(), "")
 	avail := a.available(full.touched)
-	if len(sel) == len(catalogue) {
+	if sameSet(sel, formatFixes()) {
 		res, _ := a.finish(full) // converted: nothing to read again
 		a.report(res, full, sel, avail, nil)
 		return res, nil
 	}
-	o := a.plan(sel)
+	o := a.plan(sel, opt.SubmitterName)
 	res, ok := a.finish(o)
 	forced := fixSet{}
 	if !ok {
@@ -146,7 +187,7 @@ func RepairWithOptions(data []byte, opt Options) (*Result, error) {
 				retry[f] = true
 			}
 		}
-		o = a.plan(retry)
+		o = a.plan(retry, opt.SubmitterName)
 		if res, ok = a.finish(o); !ok {
 			o = &outcome{touched: lineSets{}}
 			res = a.unchanged()
@@ -165,7 +206,7 @@ func (a *analysis) report(res *Result, o *outcome, sel fixSet, avail []FixInfo, 
 	res.Skipped = []FixInfo{}
 	for _, f := range catalogue {
 		if k := len(o.touched[f]); k > 0 {
-			res.Applied = append(res.Applied, FixInfo{Fix: f, Lines: k})
+			res.Applied = append(res.Applied, FixInfo{Fix: f, Lines: k, Kind: kindOf(f)})
 		}
 	}
 	for _, av := range avail {
@@ -175,26 +216,41 @@ func (a *analysis) report(res *Result, o *outcome, sel fixSet, avail []FixInfo, 
 		reason := reasonReadChange
 		switch {
 		case forced[av.Fix]:
+		case o.skipReason[av.Fix] != "":
+			reason = o.skipReason[av.Fix]
 		case !o.conv && a.raw == nil,
 			!o.conv && av.Fix == FixLongLines && !a.same,
 			!o.conv && av.Fix == FixBOM && a.bomNeedsConv:
 			reason = reasonNeedsUTF8
 		}
-		res.Skipped = append(res.Skipped, FixInfo{Fix: av.Fix, Lines: av.Lines, Reason: reason})
+		res.Skipped = append(res.Skipped, FixInfo{Fix: av.Fix, Lines: av.Lines, Reason: reason, Kind: av.Kind})
 	}
 }
 
-func everyFix() fixSet {
+// formatFixes is the default selection: every format kind.
+func formatFixes() fixSet {
 	s := fixSet{}
-	for _, f := range catalogue {
+	for _, f := range formatKinds {
 		s[f] = true
 	}
 	return s
 }
 
+func sameSet(a, b fixSet) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for f := range a {
+		if !b[f] {
+			return false
+		}
+	}
+	return true
+}
+
 func selected(opt Options) (fixSet, error) {
 	if opt.Fixes == nil {
-		return everyFix(), nil
+		return formatFixes(), nil
 	}
 	s := fixSet{}
 	for _, f := range opt.Fixes {
@@ -239,6 +295,7 @@ type analysis struct {
 	// decoder finds (see parser scanChar); without the conversion none of
 	// them is removed or split.
 	charScanEnd int
+	facts       dataFacts
 }
 
 func analyse(data []byte) (*analysis, error) {
@@ -338,6 +395,7 @@ func analyse(data []byte) (*analysis, error) {
 		}
 	}
 	a.charScanEnd = a.scanEnd()
+	a.analyseData()
 	return a, nil
 }
 
@@ -388,7 +446,15 @@ type plan struct {
 	charAfter int
 	trailer   bool
 	common    string
+	// Lines the data kinds add: after or before a line, or at the end
+	// (before an added trailer).
+	insertAfter, insertBefore map[int][]insLine
+	appendEnd                 []insLine
 }
+
+// insLine is an added line, as written in the file's own encoding (raw) and
+// in UTF-8 (dec).
+type insLine struct{ raw, dec string }
 
 // outcome is a planned run: what it does to each line, its Changes and the
 // original lines each kind changes. finish turns it into a Result.
@@ -401,12 +467,15 @@ type outcome struct {
 	keepBOM              bool
 	unreadable, readUTF8 bool
 	none                 bool // nothing can be done: keep the file
+	// skipReason says why a chosen data kind did nothing, when the plan
+	// knows (a missing name, say).
+	skipReason map[Fix]string
 }
 
 // plan decides what the fixes in sel do, without writing anything.
-func (a *analysis) plan(sel fixSet) *outcome {
+func (a *analysis) plan(sel fixSet, name string) *outcome {
 	conv := sel[FixEncoding]
-	o := &outcome{conv: conv, touched: lineSets{}, changes: []Change{}}
+	o := &outcome{conv: conv, touched: lineSets{}, changes: []Change{}, skipReason: map[Fix]string{}}
 	if !conv && a.raw == nil {
 		o.none = true
 		return o
@@ -476,8 +545,17 @@ func (a *analysis) plan(sel fixSet) *outcome {
 	p := plan{
 		removed: make([]bool, n), strip: make([]bool, n), fixCR: make([]bool, n),
 		splits: map[int][]string{}, replace: map[int]string{}, charAfter: -1,
+		insertAfter: map[int][]insLine{}, insertBefore: map[int][]insLine{},
 	}
+
+	// The data kinds come first, so the format kinds see the final lines.
+	// p.removed marks every line they remove.
+	a.planData(sel, name, o, &p, guard, add)
+
 	for i := a.head; i < n; i++ {
+		if p.removed[i] {
+			continue
+		}
 		if a.blank[i] {
 			if sel[FixBlankLines] && (conv || asciiBlank(a.raw[i].text) && i >= a.charScanEnd) && (!guard || !a.prevHigh(i)) {
 				p.removed[i] = true
@@ -508,7 +586,7 @@ func (a *analysis) plan(sel fixSet) *outcome {
 	if sel[FixLongLines] && (conv || a.same) {
 		for i := a.head; i < n; i++ {
 			nd := a.nodes[i]
-			if !nd.ok || !conv && i < a.charScanEnd {
+			if !nd.ok || p.removed[i] || !conv && i < a.charScanEnd {
 				continue
 			}
 			t := p.text(src, a.ws, i)
@@ -575,11 +653,11 @@ func (a *analysis) finish(o *outcome) (res *Result, ok bool) {
 	if o.none {
 		return a.unchanged(), true
 	}
-	out := o.p.emit(o.src, a.ws, a.head)
+	out := o.p.emit(o.src, a.ws, a.head, !o.conv)
 	if o.keepBOM {
 		out = append([]byte{0xEF, 0xBB, 0xBF}, out...)
 	}
-	if !o.conv && !rereadOK(out, o.p.emit(a.src, a.ws, a.head)) {
+	if !o.conv && !rereadOK(out, o.p.emit(a.src, a.ws, a.head, false)) {
 		return nil, false
 	}
 	res = &Result{Data: out, Changes: o.changes}
@@ -609,9 +687,19 @@ func (p *plan) text(lines []srcLine, ws []int, i int) string {
 }
 
 // emit writes lines with the plan applied.
-func (p *plan) emit(lines []srcLine, ws []int, head int) []byte {
+func (p *plan) emit(lines []srcLine, ws []int, head int, raw bool) []byte {
 	out := make([]outLine, 0, len(lines)+2)
+	ins := func(ls []insLine) {
+		for _, l := range ls {
+			if raw {
+				out = append(out, outLine{l.raw, p.common})
+			} else {
+				out = append(out, outLine{l.dec, p.common})
+			}
+		}
+	}
 	for i, l := range lines {
+		ins(p.insertBefore[i])
 		term := l.term
 		if p.fixCR[i] {
 			term = "\r\n"
@@ -620,7 +708,6 @@ func (p *plan) emit(lines []srcLine, ws []int, head int) []byte {
 		case i < head:
 			out = append(out, outLine{l.text, term})
 		case p.removed[i]:
-			continue
 		case p.splits[i] != nil:
 			for _, s := range p.splits[i] {
 				out = append(out, outLine{s, term})
@@ -633,7 +720,9 @@ func (p *plan) emit(lines []srcLine, ws []int, head int) []byte {
 		if i == p.charAfter {
 			out = append(out, outLine{"1 CHAR UTF-8", p.common})
 		}
+		ins(p.insertAfter[i])
 	}
+	ins(p.appendEnd)
 	if p.trailer {
 		out = append(out, outLine{"0 TRLR", p.common})
 	}
@@ -685,7 +774,10 @@ func (a *analysis) rawStripOK(i int) bool {
 func (a *analysis) available(touched lineSets) []FixInfo {
 	out := []FixInfo{}
 	for _, f := range catalogue {
-		info := FixInfo{Fix: f, Lines: len(touched[f])}
+		info := FixInfo{Fix: f, Lines: len(touched[f]), Kind: kindOf(f)}
+		if info.Kind == KindData {
+			info.Lines = a.dataLines(f)
+		}
 		switch f {
 		case FixEncoding:
 			if a.utf16 {
@@ -703,8 +795,18 @@ func (a *analysis) available(touched lineSets) []FixInfo {
 			if !a.same {
 				info.Reason = reasonNeedsUTF8
 			}
+		case FixEmptyFamilies:
+			if a.facts.famWithData {
+				info.Reason = reasonFamilyData
+			}
+			if a.raw == nil {
+				info.Reason = reasonNeedsUTF8
+			}
 		}
-		if info.Lines == 0 && !info.Required {
+		// An empty-families entry with no family to remove but one that
+		// holds data is listed as not offered (Lines 0, with the reason).
+		notOffered := f == FixEmptyFamilies && a.facts.famWithData
+		if info.Lines == 0 && !info.Required && !notOffered {
 			continue
 		}
 		out = append(out, info)

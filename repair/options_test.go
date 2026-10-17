@@ -16,13 +16,14 @@ import (
 var allFixes = []Fix{FixEncoding, FixBOM, FixLineEndings, FixBlankLines, FixLeadingSpace, FixLongLines, FixTrailer}
 
 func TestFixValues(t *testing.T) {
-	want := []string{"encoding", "bom", "line-endings", "blank-lines", "leading-space", "long-lines", "trailer"}
-	for i, f := range allFixes {
+	want := []string{"encoding", "bom", "line-endings", "blank-lines", "leading-space", "long-lines", "trailer",
+		"broken-links", "empty-families", "submitter"}
+	for i, f := range Fixes() {
 		if string(f) != want[i] {
 			t.Errorf("fix %d = %q, want %q", i, f, want[i])
 		}
 	}
-	if !reflect.DeepEqual(Fixes(), allFixes) {
+	if !reflect.DeepEqual(Fixes()[:len(allFixes)], allFixes) || len(Fixes()) != len(want) {
 		t.Errorf("Fixes() = %v", Fixes())
 	}
 }
@@ -253,21 +254,21 @@ func TestAvailable(t *testing.T) {
 		want []FixInfo
 	}{
 		{"ansel messy", []byte(anselMessy), []FixInfo{
-			{FixEncoding, 3, false, ""}, // CHAR and the two lines with accents
-			{FixBlankLines, 2, false, ""},
-			{FixLeadingSpace, 3, false, ""},
-			{FixTrailer, 1, false, ""},
+			{FixEncoding, 3, false, "", kindOf(FixEncoding)}, // CHAR and the two lines with accents
+			{FixBlankLines, 2, false, "", kindOf(FixBlankLines)},
+			{FixLeadingSpace, 3, false, "", kindOf(FixLeadingSpace)},
+			{FixTrailer, 1, false, "", kindOf(FixTrailer)},
 		}},
 		{"ansel long", anselLong(), []FixInfo{
-			{FixEncoding, 2, false, ""},
-			{FixBlankLines, 1, false, ""},
-			{FixLongLines, 1, false, reasonNeedsUTF8},
+			{FixEncoding, 2, false, "", kindOf(FixEncoding)},
+			{FixBlankLines, 1, false, "", kindOf(FixBlankLines)},
+			{FixLongLines, 1, false, reasonNeedsUTF8, kindOf(FixLongLines)},
 		}},
 		{"utf16 messy", utf16Messy(), []FixInfo{
-			{FixEncoding, 5, true, reasonUTF16}, // every line
-			{FixBlankLines, 1, false, reasonNeedsUTF8},
-			{FixLeadingSpace, 1, false, reasonNeedsUTF8},
-			{FixTrailer, 1, false, reasonNeedsUTF8},
+			{FixEncoding, 5, true, reasonUTF16, kindOf(FixEncoding)}, // every line
+			{FixBlankLines, 1, false, reasonNeedsUTF8, kindOf(FixBlankLines)},
+			{FixLeadingSpace, 1, false, reasonNeedsUTF8, kindOf(FixLeadingSpace)},
+			{FixTrailer, 1, false, reasonNeedsUTF8, kindOf(FixTrailer)},
 		}},
 	}
 	for _, c := range cases {
@@ -327,7 +328,7 @@ func TestUTF16WithoutEncoding(t *testing.T) {
 	if !bytes.Equal(res.Data, raw) || len(res.Changes) != 0 {
 		t.Errorf("Data changed or Changes %v", res.Changes)
 	}
-	if len(res.Available) == 0 || res.Available[0] != (FixInfo{FixEncoding, 5, true, "this file is UTF-16, so it has to be converted first"}) {
+	if len(res.Available) == 0 || res.Available[0] != (FixInfo{FixEncoding, 5, true, "this file is UTF-16, so it has to be converted first", kindOf(FixEncoding)}) {
 		t.Errorf("Available %+v", res.Available)
 	}
 	for _, a := range res.Available {
@@ -405,7 +406,7 @@ func TestBOMOverrulingCharNeedsConversion(t *testing.T) {
 	if !bytes.Equal(res.Data, raw) || len(res.Changes) != 0 {
 		t.Errorf("Changes %v", res.Changes)
 	}
-	if !slices.Contains(res.Available, FixInfo{FixBOM, 1, false, reasonNeedsUTF8}) {
+	if !slices.Contains(res.Available, FixInfo{FixBOM, 1, false, reasonNeedsUTF8, kindOf(FixBOM)}) {
 		t.Errorf("Available %+v", res.Available)
 	}
 }

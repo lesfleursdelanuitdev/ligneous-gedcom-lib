@@ -69,6 +69,9 @@ type Change struct {
 	Line int    `json:"line"`
 	What string `json:"what"`
 	Fix  Fix    `json:"fix"`
+	// Removed holds the text of the lines nested under a removed line, for
+	// the data kinds, so the page can show exactly what goes.
+	Removed []string `json:"removed,omitempty"`
 }
 
 // Result is the repaired file, the changes made, the codes of the problems
@@ -119,6 +122,7 @@ type srcLine struct {
 type node struct {
 	ok         bool
 	level      int
+	xref       string // the line's own xref ("0 @I1@ INDI"), or ""
 	tag        string
 	valueStart int // byte offset of the value in the cleaned text
 	parent     int // index of the parent line, -1 for level 0 or a dropped line
@@ -215,7 +219,9 @@ func tokenise(t string) node {
 		i++
 	}
 	tok := t[start:i]
+	xref := ""
 	if len(tok) > 2 && tok[0] == '@' && tok[len(tok)-1] == '@' {
+		xref = tok
 		for i < len(t) && isSep(t[i]) {
 			i++
 		}
@@ -232,7 +238,7 @@ func tokenise(t string) node {
 	if i < len(t) {
 		vs = i + 1
 	}
-	return node{ok: true, level: level, tag: tok, valueStart: vs}
+	return node{ok: true, level: level, xref: xref, tag: tok, valueStart: vs}
 }
 
 func value(t string, nd node) string { return t[nd.valueStart:] }

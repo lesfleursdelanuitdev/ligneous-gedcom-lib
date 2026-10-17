@@ -50,7 +50,7 @@ func TestProbesKeepTheSafeFixes(t *testing.T) {
 			if !kinds[FixTrailer] || !kinds[FixLeadingSpace] || kinds[FixBlankLines] {
 				t.Errorf("Changes %+v", res.Changes)
 			}
-			want := FixInfo{Fix: FixBlankLines, Lines: len(touchedBlank(raw)), Reason: reasonReadChange}
+			want := FixInfo{Fix: FixBlankLines, Lines: len(touchedBlank(raw)), Reason: reasonReadChange, Kind: KindFormat}
 			if !slices.Contains(res.Skipped, want) {
 				t.Errorf("Skipped %+v, want %+v in it", res.Skipped, want)
 			}
@@ -85,11 +85,11 @@ func TestRereadRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertChanges(t, res.Changes, []lw{{11, "added the end-of-file marker (0 TRLR)"}})
-	wantSkipped := []FixInfo{{FixBlankLines, 2, false, reasonReadChange}, {FixLeadingSpace, 3, false, reasonReadChange}}
+	wantSkipped := []FixInfo{{FixBlankLines, 2, false, reasonReadChange, kindOf(FixBlankLines)}, {FixLeadingSpace, 3, false, reasonReadChange, kindOf(FixLeadingSpace)}}
 	if !reflect.DeepEqual(res.Skipped, wantSkipped) {
 		t.Errorf("Skipped %+v", res.Skipped)
 	}
-	if want := []FixInfo{{Fix: FixTrailer, Lines: 1}}; !reflect.DeepEqual(res.Applied, want) {
+	if want := []FixInfo{{Fix: FixTrailer, Lines: 1, Kind: KindFormat}}; !reflect.DeepEqual(res.Applied, want) {
 		t.Errorf("Applied %+v", res.Applied)
 	}
 
@@ -98,7 +98,7 @@ func TestRereadRetry(t *testing.T) {
 	if !bytes.Equal(res.Data, raw) || len(res.Changes) != 0 || len(res.Applied) != 0 {
 		t.Errorf("Changes %v Applied %v", res.Changes, res.Applied)
 	}
-	wantSkipped = append(wantSkipped, FixInfo{FixTrailer, 1, false, reasonReadChange})
+	wantSkipped = append(wantSkipped, FixInfo{FixTrailer, 1, false, reasonReadChange, kindOf(FixTrailer)})
 	if !reflect.DeepEqual(res.Skipped, wantSkipped) {
 		t.Errorf("Skipped %+v", res.Skipped)
 	}
@@ -155,24 +155,24 @@ func TestChosenKindsAreAppliedOrSkipped(t *testing.T) {
 
 func TestAppliedCounts(t *testing.T) {
 	res, _ := RepairWithOptions([]byte(anselMessy), Options{Fixes: []Fix{FixBlankLines}})
-	if want := []FixInfo{{Fix: FixBlankLines, Lines: 2}}; !reflect.DeepEqual(res.Applied, want) || len(res.Skipped) != 0 {
+	if want := []FixInfo{{Fix: FixBlankLines, Lines: 2, Kind: KindFormat}}; !reflect.DeepEqual(res.Applied, want) || len(res.Skipped) != 0 {
 		t.Errorf("Applied %+v Skipped %+v", res.Applied, res.Skipped)
 	}
 	// The U+00A0 blank line is not removed: 0 lines, and skipped.
 	res, _ = RepairWithOptions(extraInputs()["cp1252 nbsp blank line"], Options{Fixes: []Fix{FixBlankLines, FixLeadingSpace}})
-	if want := []FixInfo{{Fix: FixLeadingSpace, Lines: 1}}; !reflect.DeepEqual(res.Applied, want) {
+	if want := []FixInfo{{Fix: FixLeadingSpace, Lines: 1, Kind: KindFormat}}; !reflect.DeepEqual(res.Applied, want) {
 		t.Errorf("Applied %+v", res.Applied)
 	}
-	if want := []FixInfo{{FixBlankLines, 1, false, reasonReadChange}}; !reflect.DeepEqual(res.Skipped, want) {
+	if want := []FixInfo{{FixBlankLines, 1, false, reasonReadChange, kindOf(FixBlankLines)}}; !reflect.DeepEqual(res.Skipped, want) {
 		t.Errorf("Skipped %+v", res.Skipped)
 	}
 	// Skipped for want of the conversion.
 	res, _ = RepairWithOptions(anselLong(), Options{Fixes: []Fix{FixLongLines}})
-	if want := []FixInfo{{FixLongLines, 1, false, reasonNeedsUTF8}}; !reflect.DeepEqual(res.Skipped, want) {
+	if want := []FixInfo{{FixLongLines, 1, false, reasonNeedsUTF8, kindOf(FixLongLines)}}; !reflect.DeepEqual(res.Skipped, want) {
 		t.Errorf("Skipped %+v", res.Skipped)
 	}
 	res, _ = RepairWithOptions(utf16Messy(), Options{Fixes: []Fix{FixBlankLines, FixTrailer}})
-	if want := []FixInfo{{FixBlankLines, 1, false, reasonNeedsUTF8}, {FixTrailer, 1, false, reasonNeedsUTF8}}; !reflect.DeepEqual(res.Skipped, want) {
+	if want := []FixInfo{{FixBlankLines, 1, false, reasonNeedsUTF8, kindOf(FixBlankLines)}, {FixTrailer, 1, false, reasonNeedsUTF8, kindOf(FixTrailer)}}; !reflect.DeepEqual(res.Skipped, want) {
 		t.Errorf("Skipped %+v", res.Skipped)
 	}
 }
@@ -184,7 +184,7 @@ func TestPartialLineEndingsMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertChanges(t, res.Changes, []lw{{0, "changed 6 line endings to CRLF"}})
-	if want := []FixInfo{{Fix: FixLineEndings, Lines: 6}}; !reflect.DeepEqual(res.Applied, want) {
+	if want := []FixInfo{{Fix: FixLineEndings, Lines: 6, Kind: KindFormat}}; !reflect.DeepEqual(res.Applied, want) {
 		t.Errorf("Applied %+v", res.Applied)
 	}
 	// Every bare CR changed: the v0.2.1 wording.
