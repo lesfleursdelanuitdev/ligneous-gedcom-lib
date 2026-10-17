@@ -35,13 +35,13 @@ func TestBrokenLinks(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []Change{
-		{Line: 8, What: "removed a link to family @F9@, which doesn't exist (and 1 lines under it)", Fix: FixBrokenLinks, Removed: []string{"2 PEDI birth"}},
+		{Line: 8, What: "removed a link to family @F9@, which doesn't exist (and 1 line under it)", Fix: FixBrokenLinks, Removed: []string{"2 PEDI birth"}},
 		{Line: 12, What: "removed a link to source @S9@, which doesn't exist (and 2 lines under it)", Fix: FixBrokenLinks, Removed: []string{"3 PAGE p. 12", "3 QUAY 2"}},
-		{Line: 15, What: "removed a link to person @I9@, which doesn't exist (and 1 lines under it)", Fix: FixBrokenLinks, Removed: []string{"2 RELA godfather"}},
+		{Line: 15, What: "removed a link to person @I9@, which doesn't exist (and 1 line under it)", Fix: FixBrokenLinks, Removed: []string{"2 RELA godfather"}},
 		{Line: 19, What: "removed a link to note @N9@, which doesn't exist", Fix: FixBrokenLinks},
 		{Line: 20, What: "removed a link to media @M9@, which doesn't exist", Fix: FixBrokenLinks},
 		{Line: 24, What: "removed a link to person @I8@, which doesn't exist", Fix: FixBrokenLinks},
-		{Line: 28, What: "removed a link to repository @R9@, which doesn't exist (and 1 lines under it)", Fix: FixBrokenLinks, Removed: []string{"2 CALN 7"}},
+		{Line: 28, What: "removed a link to repository @R9@, which doesn't exist (and 1 line under it)", Fix: FixBrokenLinks, Removed: []string{"2 CALN 7"}},
 	}
 	if !reflect.DeepEqual(res.Changes, want) {
 		t.Errorf("Changes\n got  %+v\n want %+v", res.Changes, want)

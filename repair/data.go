@@ -241,7 +241,11 @@ func (a *analysis) planData(sel fixSet, name string, o *outcome, p *plan, guard 
 			}
 		}
 		if counted && len(nested) > 0 {
-			what += fmt.Sprintf(" (and %d lines under it)", len(nested))
+			if len(nested) == 1 {
+				what += " (and 1 line under it)"
+			} else {
+				what += fmt.Sprintf(" (and %d lines under it)", len(nested))
+			}
 		}
 		o.changes = append(o.changes, Change{Line: u.start + 1, What: what, Fix: f, Removed: nested})
 	}
