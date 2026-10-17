@@ -20,7 +20,7 @@ func TestRepairMixedUTF8Latin1(t *testing.T) {
 	if string(res.Data) != want {
 		t.Errorf("Data:\n%q\nwant\n%q", res.Data, want)
 	}
-	assertChanges(t, res.Changes, []Change{{9, "converted 1 stray Windows-1252 characters to UTF-8"}})
+	assertChanges(t, res.Changes, []lw{{9, "converted 1 stray Windows-1252 characters to UTF-8"}})
 	for _, code := range []string{"ENCODING_NOT_UTF8", "ENCODING_MISLABELED", "ENCODING_UNDECLARED", "ENCODING_BAD_BYTES"} {
 		assertLeftHas(t, res, code, false)
 	}
@@ -47,7 +47,7 @@ func TestRepairANSELMarkAcrossConc(t *testing.T) {
 	if string(res.Data) != want {
 		t.Errorf("Data:\n%q\nwant\n%q", res.Data, want)
 	}
-	assertChanges(t, res.Changes, []Change{{0, "converted from ANSEL to UTF-8"}, {4, "set the character set to UTF-8"}})
+	assertChanges(t, res.Changes, []lw{{0, "converted from ANSEL to UTF-8"}, {4, "set the character set to UTF-8"}})
 	if got := enrichedJSON(t, res.Data); !strings.Contains(got, `"René and more"`) {
 		t.Errorf("enriched note is not \"René and more\":\n%s", got)
 	}
@@ -81,7 +81,7 @@ func unreadableInputs() map[string][]byte {
 }
 
 func TestRepairUnreadableChanges(t *testing.T) {
-	want := map[string][]Change{
+	want := map[string][]lw{
 		"BOM and stray byte": {{0, "removed the byte order mark"}, {4, "replaced 1 unreadable characters with �"}},
 		"UTF-16 lone surrogate": {{0, "converted from UTF-16LE to UTF-8"}, {0, "removed the byte order mark"},
 			{2, "set the character set to UTF-8"}, {4, "replaced 1 unreadable characters with �"}},
@@ -191,18 +191,18 @@ func TestRepairMixedRuleFixtures(t *testing.T) {
 	cases := []struct {
 		file    string
 		data    string   // the repaired file must contain this
-		changes []Change // exactly
+		changes []lw     // exactly
 		notes   []string // enriched JSON must contain these
 	}{
 		{"conc-split-utf8-few.ged", "1 NAME Jean /Dupont/\r\n1 NOTE Café\r\n2 CONC  au lait\r\n",
-			[]Change{{7, "joined a character split across lines 7 and 8"}}, []string{`"Café au lait"`}},
+			[]lw{{7, "joined a character split across lines 7 and 8"}}, []string{`"Café au lait"`}},
 		{"conc-split-utf8-many.ged", "1 NOTE Café\r\n2 CONC  au lait\r\n1 NOTE Prix 10€\r\n2 CONC , payé\r\n",
-			[]Change{{9, "joined a character split across lines 9 and 10"}, {11, "joined a character split across lines 11 and 12"}},
+			[]lw{{9, "joined a character split across lines 9 and 10"}, {11, "joined a character split across lines 11 and 12"}},
 			[]string{`"Café au lait"`, `"Prix 10€, payé"`, `"Renée /Dupré/"`, `"Zürich"`}},
 		{"utf8-tie.ged", "1 NAME Renée /Dupont/\r\n1 NOTE ét\r\n",
-			[]Change{{7, "converted 1 stray Windows-1252 characters to UTF-8"}}, []string{`"ét"`, `"Renée /Dupont/"`}},
+			[]lw{{7, "converted 1 stray Windows-1252 characters to UTF-8"}}, []string{`"ét"`, `"Renée /Dupont/"`}},
 		{"ansi-declared-utf8.ged", "1 CHAR UTF-8\r\n0 @I1@ INDI\r\n1 NAME Renée /Dupré/\r\n1 NOTE Café au lait\r\n",
-			[]Change{{4, "set the character set to UTF-8"}, {6, "read 2 characters as UTF-8 (the header said ANSI)"},
+			[]lw{{4, "set the character set to UTF-8"}, {6, "read 2 characters as UTF-8 (the header said ANSI)"},
 				{7, "converted 1 stray Windows-1252 characters to UTF-8"}},
 			[]string{`"Café au lait"`, `"Renée /Dupré/"`}},
 	}
@@ -246,7 +246,7 @@ func TestRepairLegacyTieAndMajority(t *testing.T) {
 			if !strings.Contains(string(res.Data), "1 NAME Renée /X/\r\n1 NOTE CAFÉ”\r\n") {
 				t.Errorf("Data %q", res.Data)
 			}
-			if len(res.Changes) == 0 || res.Changes[0] != (Change{0, "converted from Windows-1252 to UTF-8"}) {
+			if len(res.Changes) == 0 || lwOf(res.Changes[0]) != (lw{0, "converted from Windows-1252 to UTF-8"}) {
 				t.Errorf("Changes %v", res.Changes)
 			}
 			for _, c := range res.Changes {
@@ -266,7 +266,7 @@ func TestRepairLegacyTieAndMajority(t *testing.T) {
 		if string(res.Data) != want {
 			t.Errorf("Data:\n%q\nwant\n%q", res.Data, want)
 		}
-		assertChanges(t, res.Changes, []Change{
+		assertChanges(t, res.Changes, []lw{
 			{4, "set the character set to UTF-8"},
 			{6, "read 2 characters as UTF-8 (the header said ANSI)"},
 			{8, "read 1 characters as UTF-8 (the header said ANSI)"},
@@ -294,7 +294,7 @@ func TestRepairUTF8SplitJoinsBack(t *testing.T) {
 			if want := head + c.data + "0 TRLR\r\n"; string(res.Data) != want {
 				t.Errorf("Data:\n%q\nwant\n%q", res.Data, want)
 			}
-			assertChanges(t, res.Changes, []Change{{7, "joined a character split across lines 7 and 8"}})
+			assertChanges(t, res.Changes, []lw{{7, "joined a character split across lines 7 and 8"}})
 			if got := enrichedJSON(t, res.Data); !strings.Contains(got, c.note) {
 				t.Errorf("enriched note is not %s:\n%s", c.note, got)
 			}
@@ -319,7 +319,7 @@ func TestRepairUTF8SplitNoJoinIsRecorded(t *testing.T) {
 	if !strings.Contains(string(res.Data), first[:253]+"â\r\n2 CONC ‚¬y\r\n") {
 		t.Errorf("Data %q", res.Data)
 	}
-	assertChanges(t, res.Changes, []Change{
+	assertChanges(t, res.Changes, []lw{
 		{8, "converted 1 stray Windows-1252 characters to UTF-8"},
 		{9, "converted 2 stray Windows-1252 characters to UTF-8"},
 	})

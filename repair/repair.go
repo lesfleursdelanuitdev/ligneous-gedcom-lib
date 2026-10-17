@@ -20,6 +20,12 @@
 // Links, dates, names, the order of lines, xrefs, level jumps and unknown
 // records are never changed; their findings stay in Result.Left.
 //
+// Choosing fixes. RepairWithOptions applies only the kinds of fix named in
+// Options (see Fix); Repair applies them all. Without FixEncoding the file
+// keeps its encoding and the other fixes work on its original bytes; see
+// RepairWithOptions for what is skipped then. Result.Available lists the
+// kinds the file could use.
+//
 // Splitting. A long line is split only when the enricher joins its CONC lines
 // back into the same text, so the repaired file reads exactly like the
 // original. In practice that is NOTE text:
@@ -43,7 +49,6 @@ package repair
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -55,18 +60,24 @@ import (
 )
 
 // Change is one repair. Line is the 1-based line number in the original file;
-// 0 means the whole file.
+// 0 means the whole file. Fix is the kind of repair it belongs to.
 type Change struct {
 	Line int    `json:"line"`
 	What string `json:"what"`
+	Fix  Fix    `json:"fix"`
 }
 
-// Result is the repaired file, the changes made, and the codes of the
-// problems that remain.
+// Result is the repaired file, the changes made, the codes of the problems
+// that remain (including those of fixes not chosen), and the kinds of fix the
+// file could use.
 type Result struct {
-	Data    []byte   `json:"-"` // UTF-8, no byte order mark
-	Changes []Change `json:"changes"`
-	Left    []string `json:"left"` // sorted, deduplicated finding codes
+	// Data is UTF-8 without a byte order mark when every fix is chosen.
+	// Without FixEncoding it keeps the original encoding; without FixBOM a
+	// UTF-8 byte order mark stays.
+	Data      []byte    `json:"-"`
+	Changes   []Change  `json:"changes"`
+	Left      []string  `json:"left"` // sorted, deduplicated finding codes
+	Available []FixInfo `json:"available"`
 }
 
 // maxLine is the GEDCOM limit for a line, in bytes, without its terminator.
@@ -112,221 +123,6 @@ type outLine struct {
 	term string
 }
 
-// Repair decodes data, applies the fixes described in the package comment
-// and returns the result. It fails only when data holds no GEDCOM line.
-func Repair(data []byte) (*Result, error) {
-	text, info, _, fixes := parser.DecodeReport(data)
-	src := splitLines(text)
-	n := len(src)
-
-	head := 0
-	for i, l := range src {
-		if f := strings.Fields(l.text); len(f) >= 2 && f[0] == "0" && f[1] == "HEAD" {
-			head = i
-			break
-		}
-	}
-	hasHead := head < n && isHead(src[head].text)
-
-	changes := []Change{}
-	if info.Detected != "UTF-8" && info.Detected != "ASCII" {
-		changes = append(changes, Change{0, "converted from " + info.Detected + " to UTF-8"})
-	}
-	if hasBOM(data) {
-		changes = append(changes, Change{0, whatBOM})
-	}
-	// What decoding did to single lines: stray bytes in a UTF-8 file read as
-	// Windows-1252, unreadable bytes written as U+FFFD, characters split
-	// across a CONC line joined, and lines read as UTF-8 against the header.
-	unreadable, readUTF8 := false, false
-	for _, f := range fixes {
-		if f.UTF8 > 0 { // the header named a legacy encoding
-			readUTF8 = true
-			changes = append(changes, Change{f.Line, fmt.Sprintf(whatReadUTF8, f.UTF8, info.Declared)})
-		}
-		if f.Stray > 0 {
-			changes = append(changes, Change{f.Line, fmt.Sprintf(whatStray, f.Stray)})
-		}
-		if f.Unreadable > 0 {
-			unreadable = true
-			changes = append(changes, Change{f.Line, fmt.Sprintf(whatUnreadable, f.Unreadable)})
-		}
-		if f.Joined > 0 { // the CONC line is the next one
-			changes = append(changes, Change{f.Line, fmt.Sprintf(whatJoined, f.Line, f.Line+1)})
-		}
-	}
-
-	// Clean each line from HEAD on: drop blank lines, strip leading whitespace
-	// from GEDCOM lines.
-	clean := make([]string, n)
-	removed := make([]bool, n)
-	nodes := make([]node, n)
-	stack := []int{}
-	anyNode := false
-	for i := head; i < n; i++ {
-		t := src[i].text
-		if strings.TrimSpace(t) == "" {
-			removed[i] = true
-			changes = append(changes, Change{i + 1, whatBlank})
-			continue
-		}
-		// Strip leading whitespace only from a GEDCOM line (level and tag);
-		// any other line is kept exactly as it is.
-		s := strings.TrimLeft(t, " \t")
-		nd := tokenise(s)
-		nd.parent = -1
-		if !nd.ok {
-			clean[i] = t
-			nodes[i] = nd
-			continue
-		}
-		if s != t {
-			t = s
-			changes = append(changes, Change{i + 1, whatWhitespace})
-		}
-		clean[i] = t
-		anyNode = true
-		if nd.level == 0 {
-			stack = append(stack[:0], i)
-		} else if len(stack) > 0 {
-			for len(stack) > 1 && nodes[stack[len(stack)-1]].level >= nd.level {
-				stack = stack[:len(stack)-1]
-			}
-			nd.parent = stack[len(stack)-1]
-			nodes[nd.parent].children = append(nodes[nd.parent].children, i)
-			stack = append(stack, i)
-		}
-		nodes[i] = nd
-	}
-	if !anyNode {
-		return nil, errors.New("the file has no GEDCOM lines")
-	}
-
-	// CHAR: rewrite it in place, or plan to insert it.
-	replace := map[int]string{}
-	charAfter := -1
-	if hasHead {
-		charLine := -1
-		for _, c := range nodes[head].children {
-			if nodes[c].level == 1 && nodes[c].tag == "CHAR" {
-				charLine = c
-				break
-			}
-		}
-		switch {
-		case charLine >= 0:
-			if value(clean[charLine], nodes[charLine]) != "UTF-8" || info.Detected != "UTF-8" {
-				replace[charLine] = "1 CHAR UTF-8"
-				changes = append(changes, Change{charLine + 1, whatCharset})
-			}
-		default:
-			charAfter = head
-			for _, c := range nodes[head].children {
-				if nodes[c].level == 1 && nodes[c].tag == "GEDC" {
-					charAfter = lastDescendant(nodes, c)
-					break
-				}
-			}
-			changes = append(changes, Change{head + 1, whatCharset})
-		}
-	}
-
-	// Long lines.
-	splits := map[int][]string{}
-	for i := head; i < n; i++ {
-		nd := nodes[i]
-		if !nd.ok || len(clean[i]) <= maxLine || !canSplit(nodes, clean, i) {
-			continue
-		}
-		contLevel := nd.level + 1
-		if nd.tag == "CONT" || nd.tag == "CONC" {
-			contLevel = nd.level
-		}
-		if contLevel > maxDepth {
-			continue // the parser would drop the CONC lines
-		}
-		contPrefix := strconv.Itoa(contLevel) + " CONC "
-		prefix := clean[i][:nd.valueStart]
-		parts := splitValue(clean[i][nd.valueStart:], maxLine-len(prefix), maxLine-len(contPrefix))
-		if parts == nil {
-			continue
-		}
-		lines := []string{prefix + parts[0]}
-		for _, p := range parts[1:] {
-			lines = append(lines, contPrefix+p)
-		}
-		splits[i] = lines
-		changes = append(changes, Change{i + 1,
-			fmt.Sprintf("split a %d-character line into %d lines", utf8.RuneCountInString(src[i].text), len(lines))})
-	}
-
-	hasTrailer := false
-	for i := head; i < n; i++ {
-		if nodes[i].ok && nodes[i].level == 0 && nodes[i].tag == "TRLR" {
-			hasTrailer = true
-		}
-	}
-
-	// Emit.
-	common := commonTerm(src)
-	out := make([]outLine, 0, n+2)
-	crChanged := false
-	for i, l := range src {
-		term := l.term
-		if term == "\r" {
-			term = "\r\n"
-		}
-		switch {
-		case i < head:
-			out = append(out, outLine{l.text, term})
-		case removed[i]:
-			continue
-		case splits[i] != nil:
-			for _, s := range splits[i] {
-				out = append(out, outLine{s, term})
-			}
-		case replace[i] != "":
-			out = append(out, outLine{replace[i], term})
-		default:
-			out = append(out, outLine{clean[i], term})
-		}
-		if l.term == "\r" {
-			crChanged = true
-		}
-		if i == charAfter {
-			out = append(out, outLine{"1 CHAR UTF-8", common})
-		}
-	}
-	if !hasTrailer {
-		out = append(out, outLine{"0 TRLR", common})
-		changes = append(changes, Change{n + 1, whatTrailer})
-	}
-	if crChanged {
-		changes = append(changes, Change{0, whatCRLF})
-	}
-
-	var buf bytes.Buffer
-	for k, o := range out {
-		buf.WriteString(o.text)
-		if o.term == "" && k < len(out)-1 {
-			o.term = common
-		}
-		buf.WriteString(o.term)
-	}
-
-	sort.SliceStable(changes, func(a, b int) bool { return changes[a].Line < changes[b].Line })
-	res := &Result{Data: buf.Bytes(), Changes: changes}
-	var extra []string
-	if unreadable {
-		extra = append(extra, parser.CodeEncodingBadBytes)
-	}
-	if readUTF8 {
-		extra = append(extra, parser.CodeEncodingMislabeled)
-	}
-	res.Left = leftCodes(res.Data, extra...)
-	return res, nil
-}
-
 // hasBOM reports whether data starts with a UTF-8 or UTF-16 byte order mark,
 // which parser.Decode strips.
 func hasBOM(data []byte) bool {
@@ -360,16 +156,26 @@ func splitLines(b []byte) []srcLine {
 }
 
 // commonTerm is the line ending used for added lines: "\n" when most lines
-// end with it, "\r\n" otherwise (bare "\r" counts as "\r\n").
-func commonTerm(src []srcLine) string {
-	lf, crlf := 0, 0
+// end with it, "\r\n" otherwise. When bare "\r" endings are being fixed they
+// count as "\r\n"; when they are kept, "\r" is used if most lines end with it.
+func commonTerm(src []srcLine, fixCR bool) string {
+	lf, crlf, cr := 0, 0, 0
 	for _, l := range src {
 		switch l.term {
 		case "\n":
 			lf++
-		case "\r\n", "\r":
+		case "\r\n":
 			crlf++
+		case "\r":
+			cr++
 		}
+	}
+	if fixCR {
+		crlf += cr
+		cr = 0
+	}
+	if cr > lf && cr > crlf {
+		return "\r"
 	}
 	if lf > crlf {
 		return "\n"

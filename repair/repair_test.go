@@ -59,10 +59,23 @@ func repairFixture(t *testing.T, name string) (*Result, []byte) {
 	return res, raw
 }
 
-func assertChanges(t *testing.T, got []Change, want []Change) {
+// lw is a Change without its Fix, for the tests written before fix kinds.
+type lw struct {
+	Line int
+	What string
+}
+
+func lwOf(c Change) lw { return lw{c.Line, c.What} }
+
+// assertChanges compares Line and What; TestEveryChangeHasItsFix checks Fix.
+func assertChanges(t *testing.T, changes []Change, want []lw) {
 	t.Helper()
-	if len(got) == 0 && len(want) == 0 {
+	if len(changes) == 0 && len(want) == 0 {
 		return
+	}
+	got := make([]lw, len(changes))
+	for i, c := range changes {
+		got[i] = lwOf(c)
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Changes:\n got  %+v\n want %+v", got, want)
@@ -101,7 +114,7 @@ func assertFormat(t *testing.T, data []byte) {
 
 func TestRepairBlankLines(t *testing.T) {
 	res, _ := repairFixture(t, "repair/blank-lines.ged")
-	assertChanges(t, res.Changes, []Change{
+	assertChanges(t, res.Changes, []lw{
 		{8, "removed a blank line"},
 		{11, "removed a blank line"},
 		{13, "removed a blank line"},
@@ -120,7 +133,7 @@ func TestRepairBlankLines(t *testing.T) {
 
 func TestRepairLeadingSpace(t *testing.T) {
 	res, _ := repairFixture(t, "repair/leading-space.ged")
-	assertChanges(t, res.Changes, []Change{
+	assertChanges(t, res.Changes, []lw{
 		{6, "removed spaces before the level number"},
 		{7, "removed spaces before the level number"},
 		{9, "removed spaces before the level number"},
@@ -138,7 +151,7 @@ func TestRepairLeadingSpace(t *testing.T) {
 
 func TestRepairNoTrailer(t *testing.T) {
 	res, raw := repairFixture(t, "repair/no-trailer.ged")
-	assertChanges(t, res.Changes, []Change{{8, "added the end-of-file marker (0 TRLR)"}})
+	assertChanges(t, res.Changes, []lw{{8, "added the end-of-file marker (0 TRLR)"}})
 	if want := string(raw) + "\n0 TRLR\n"; string(res.Data) != want {
 		t.Errorf("Data = %q, want %q", res.Data, want)
 	}
@@ -147,7 +160,7 @@ func TestRepairNoTrailer(t *testing.T) {
 
 func TestRepairCROnly(t *testing.T) {
 	res, raw := repairFixture(t, "repair/cr-only.ged")
-	assertChanges(t, res.Changes, []Change{{0, "changed line endings to CRLF"}})
+	assertChanges(t, res.Changes, []lw{{0, "changed line endings to CRLF"}})
 	if want := strings.ReplaceAll(string(raw), "\r", "\r\n"); string(res.Data) != want {
 		t.Errorf("Data = %q, want %q", res.Data, want)
 	}
@@ -156,7 +169,7 @@ func TestRepairCROnly(t *testing.T) {
 
 func TestRepairNoChar(t *testing.T) {
 	res, _ := repairFixture(t, "repair/no-char.ged")
-	assertChanges(t, res.Changes, []Change{{1, "set the character set to UTF-8"}})
+	assertChanges(t, res.Changes, []lw{{1, "set the character set to UTF-8"}})
 	got := texts(lines(res.Data))
 	want := []string{"0 HEAD", "1 SOUR TEST", "1 GEDC", "2 VERS 5.5.1", "2 FORM LINEAGE-LINKED",
 		"1 CHAR UTF-8", "1 LANG English", "0 @I1@ INDI", "1 NAME Ida /Juul/", "0 TRLR"}
@@ -173,13 +186,13 @@ func TestRepairNoChar(t *testing.T) {
 
 func TestRepairCustomTags(t *testing.T) {
 	res, _ := repairFixture(t, "repair/custom-tags.ged")
-	assertChanges(t, res.Changes, []Change{{12, "removed a blank line"}})
+	assertChanges(t, res.Changes, []lw{{12, "removed a blank line"}})
 	assertLeftHas(t, res, "UNKNOWN_RECORD", true)
 }
 
 func TestRepairLongNote(t *testing.T) {
 	res, raw := repairFixture(t, "repair/long-note.ged")
-	assertChanges(t, res.Changes, []Change{
+	assertChanges(t, res.Changes, []lw{
 		{8, "split a 298-character line into 2 lines"},
 		{9, "split a 599-character line into 3 lines"},
 		{11, "split a 279-character line into 2 lines"},
@@ -257,7 +270,7 @@ func TestRepairLongUnsplittable(t *testing.T) {
 }
 
 func TestRepairEncodings(t *testing.T) {
-	cases := map[string][]Change{
+	cases := map[string][]lw{
 		"encodings/utf8.ged": nil,
 		"encodings/ansel.ged": {
 			{0, "converted from ANSEL to UTF-8"},
@@ -314,7 +327,7 @@ func TestRepairASCIIDeclared(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertChanges(t, res.Changes, []Change{{4, "set the character set to UTF-8"}})
+	assertChanges(t, res.Changes, []lw{{4, "set the character set to UTF-8"}})
 	if want := strings.Replace(in, "ASCII", "UTF-8", 1); string(res.Data) != want {
 		t.Errorf("Data = %q", res.Data)
 	}
@@ -327,7 +340,7 @@ func TestRepairBadBytesStayInLeft(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertChanges(t, res.Changes, []Change{
+	assertChanges(t, res.Changes, []lw{
 		{0, "removed the byte order mark"},
 		{4, "replaced 1 unreadable characters with \uFFFD"},
 	})
@@ -373,7 +386,7 @@ func TestRepairRemovesUTF8BOM(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertChanges(t, res.Changes, []Change{{0, "removed the byte order mark"}})
+	assertChanges(t, res.Changes, []lw{{0, "removed the byte order mark"}})
 	if string(res.Data) != in[3:] {
 		t.Errorf("Data = %q", res.Data)
 	}
@@ -411,7 +424,7 @@ func TestRepairNoCutAtUnicodeSpace(t *testing.T) {
 		})
 	}
 	res, _ := repairFixture(t, "repair/unicode-space.ged")
-	assertChanges(t, res.Changes, []Change{
+	assertChanges(t, res.Changes, []lw{
 		{8, "split a 354-character line into 2 lines"},
 		{9, "split a 353-character line into 2 lines"},
 	})
@@ -422,7 +435,7 @@ func TestRepairNoCutAtUnicodeSpace(t *testing.T) {
 		t.Errorf("lines = %q", got[7:11])
 	}
 	res, _ = repairFixture(t, "repair/unicode-space-1252.ged")
-	assertChanges(t, res.Changes, []Change{
+	assertChanges(t, res.Changes, []lw{
 		{0, "converted from Windows-1252 to UTF-8"},
 		{5, "set the character set to UTF-8"},
 		{8, "split a 354-character line into 2 lines"},
@@ -483,7 +496,7 @@ func TestRepairLeadingSpaceOnlyOnGedcomLines(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertChanges(t, res.Changes, []Change{{4, "removed spaces before the level number"}})
+	assertChanges(t, res.Changes, []lw{{4, "removed spaces before the level number"}})
 	want := "0 HEAD\n1 CHAR UTF-8\n0 @I1@ INDI\n1 NAME A /B/\n   some stray text\n \tx\n  @\n0 TRLR\n"
 	if string(res.Data) != want {
 		t.Errorf("Data = %q\nwant   %q", res.Data, want)
